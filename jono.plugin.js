@@ -45,6 +45,14 @@ class JonoPlugin {
         }
     }
     onKeyDown(e) {
+        const cancelInput = () => {
+            // dont send the original text into the channel
+            const el = document.querySelector('.chat-3bRxxu form');
+            if (el) {
+                BdApi.getInternalInstance(el).return.stateNode.setState({ textValue: "" });
+            }
+        };
+
         if (e.key != "Enter" || e.shiftKey || e.ctrlKey || e.altKey) {
             return;
         }
@@ -55,48 +63,80 @@ class JonoPlugin {
         }
 
         const input = textarea.value;
-        const args = input.slice(1).split(" ");
-
-        // if empty string or not command
-        if (args.length <= 0 || input[0] != '~') {
+        if (input.length <= 0) {
             return;
         }
 
-        // dont send the original text into the channel
-        const el = document.querySelector('.chat-3bRxxu form');
-        if (el) {
-            BdApi.getInternalInstance(el).return.stateNode.setState({ textValue: "" });
+        const args = input.slice(1).split(" ");
+
+        // if not command
+        if (input[0] != '~') {
+            for (const key in this.commands) {
+                if (!this.commands[key].on_input) {
+                    continue;
+                }
+
+                if (!this.commands[key].on_input(input)) {
+                    continue;
+                }  
+
+                cancelInput();
+            }
+            return;
         }
 
         if (args[0] in this.commands) {
-            this.commands[args[0]].callback(args.slice(1));
+            const cmd = this.commands[args[0]];
+            if (cmd.on_command) {
+                cmd.on_command(args.slice(1));
+            }
         }
+
+        cancelInput();
     }
 
-    createCommand(description, args, callback) {
-        return {
-            description,
-            args,
-            callback
-        };
-    }
     setupCommands() {
         this.commands = {
-            purge: this.createCommand("mass deletes messages", ["amount"], async args => {
-                const userid = JonoUtils.getUser().id;
-                const amount = parseInt(args[0]);
+            purge: new function () {
+                this.description = "mass deletes messages";
+                this.required_args = ["amount"];
+                this.on_command = async args => {
+                    const userid = JonoUtils.getUser().id;
+                    const amount = parseInt(args[0]);
+    
+                    let num_purged = 0;
+                    let messages = await JonoUtils.getMessages({ userid, amount });
+    
+                    for (let i = 0; i < messages.length; ++i) {
+                        ++num_purged;
+                        JonoUtils.deleteMessage(messages[i].channel_id, messages[i].id);
+                        await JonoUtils.sleep(400);
+                    }
+    
+                    console.log(`purged ${num_purged} messages.`);
+                };
+            },
+            seibmoz: new function () {
+                this.description = "toggles seibmoz mode";
+                this.required_args = [];
+                this.on_command = args => {
+                    this.seibmoz_toggle = !this.seibmoz_toggle;
+                    if (this.seibmoz_toggle) {
+                        JonoUtils.sendMessage(JonoUtils.getChannel().id, "seibmoz mode activated");
+                    } else {
+                        JonoUtils.sendMessage(JonoUtils.getChannel().id, "seibmoz mode deactivated");
+                    }
+                };
+                this.on_input = input => {
+                    if (!this.seibmoz_toggle) {
+                        return false;
+                    }
 
-                let num_purged = 0;
-                let messages = await JonoUtils.getMessages({ userid, amount });
-
-                for (let i = 0; i < messages.length; ++i) {
-                    ++num_purged;
-                    JonoUtils.deleteMessage(messages[i].channel_id, messages[i].id);
-                    await JonoUtils.sleep(400);
-                }
-
-                console.log(`purged ${num_purged} messages.`);
-            })
+                    JonoUtils.sendMessage(JonoUtils.getChannel().id, `:ok_hand::skin-tone-5: ${input} :ok_hand::skin-tone-5:`);
+                    return true;
+                };
+                this.seibmoz_toggle = false;
+            }
         };
     }
 }
