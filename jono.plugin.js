@@ -87,7 +87,11 @@ class JonoPlugin {
 
         if (args[0] in this.commands) {
             const cmd = this.commands[args[0]];
-            if (cmd.on_command) {
+            const num_args_req = cmd.required_args.reduce((total, x) => x.charAt(0) == "?" ? total : total + 1, 0);
+
+            if (args.length <= num_args_req) {
+                JonoUtils.sendBotMessage(JonoUtils.getChannel().id, `command requires ${num_args_req} arg(s) but ${args.length - 1} were provided`);
+            } else if (cmd.on_command && args.length > num_args_req) {
                 cmd.on_command(args.slice(1));
             }
         }
@@ -97,7 +101,7 @@ class JonoPlugin {
 
     setupCommands() {
         this.commands = {
-            purge: new function () {
+            purge: new function() {
                 this.description = "mass deletes messages";
                 this.required_args = ["amount"];
                 this.on_command = async args => {
@@ -113,18 +117,18 @@ class JonoPlugin {
                         await JonoUtils.sleep(400);
                     }
     
-                    console.log(`purged ${num_purged} messages.`);
+                    JonoUtils.sendBotMessage(JonoUtils.getChannel().id, `purged ${num_purged} messages`);
                 };
             },
-            seibmoz: new function () {
+            seibmoz: new function() {
                 this.description = "toggles seibmoz mode";
                 this.required_args = [];
                 this.on_command = args => {
                     this.seibmoz_toggle = !this.seibmoz_toggle;
                     if (this.seibmoz_toggle) {
-                        JonoUtils.sendMessage(JonoUtils.getChannel().id, "seibmoz mode activated");
+                        JonoUtils.sendBotMessage(JonoUtils.getChannel().id, "seibmoz mode activated");
                     } else {
-                        JonoUtils.sendMessage(JonoUtils.getChannel().id, "seibmoz mode deactivated");
+                        JonoUtils.sendBotMessage(JonoUtils.getChannel().id, "seibmoz mode deactivated");
                     }
                 };
                 this.on_input = input => {
@@ -136,6 +140,19 @@ class JonoPlugin {
                     return true;
                 };
                 this.seibmoz_toggle = false;
+            },
+            test: new function() {
+                this.description = "test";
+                this.required_args = [];
+                this.on_command = args => {
+                    JonoUtils.sendEmbed(JonoUtils.getChannel().id, {
+                        title: "TITLE",
+                        description: "DESCRIPTION"
+                    });
+                };
+                this.on_input = input => {
+
+                };
             }
         };
     }
@@ -151,6 +168,7 @@ const JonoUtils = {
         JonoUtils.SelectedChannelStore = BdApi.findModuleByProps("getLastSelectedChannelId");
         JonoUtils.ChannelStore = BdApi.findModuleByProps("getChannels", "getDMFromUserId");
         JonoUtils.MessageStore = BdApi.findModuleByProps("getMessages");
+        JonoUtils.MessageParser = BdApi.findModuleByProps("createMessage", "parse", "unparse");
 
         JonoUtils.request = require("request");
         JonoUtils.request_promise = options => {
@@ -249,7 +267,7 @@ const JonoUtils = {
             tts: false
         });
     },
-    sendEmbed: async embed => {
+    sendEmbed: async (channelid, embed) => {
         return JonoUtils.request_promise({
             method: "POST",
             uri: "https://discordapp.com/api/channels/" + channelid + "/messages",
@@ -259,7 +277,22 @@ const JonoUtils = {
             json: { embed }
         });
     },
+    sendBotMessage: (channel_id, content) => {
+        const msg = JonoUtils.createBotMessage(channel_id, content);
+        JonoUtils.MessageActions.receiveMessage(channel_id, msg);
+        return msg;
+    },
 
+    createBotMessage: (channel_id, content, options = { username: "Jono", discriminator: "0069" }) => {
+        let msg = JonoUtils.MessageParser.createMessage(channel_id, content);
+        msg.author.username = options.username;
+        msg.author.discriminator = options.discriminator;
+        msg.author.avatar = "clyde";
+        msg.author.bot = true;
+        msg.author.id = 69;
+        msg.state = "SENT";
+        return msg;
+    },
     deleteMessage: (channelid, messageid) => {
         JonoUtils.MessageActions.deleteMessage(channelid, messageid);
     },
