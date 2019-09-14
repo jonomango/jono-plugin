@@ -15,10 +15,7 @@ class JonoPlugin {
         return "jono"; 
     }
     getSettingsPanel() {
-        //let panel = $(`<form class="form" style="width:100%;"></form>`)[0];
-        //new ZLibrary.Settings.SettingGroup(this.getName(), { shown:true }).appendTo(panel);
         let frog = `<div class="settings-open">test<hr>test</div>`
-
         return frog;
     }
 
@@ -27,12 +24,7 @@ class JonoPlugin {
 
         JonoUtils.setup();
         this.setupCommands();
-
-        // attach keydown listener
-        const textarea = JonoUtils.getTextArea();
-        if (textarea) {
-            textarea.addEventListener("keydown", this.keydownEventListener = this.onKeyDown.bind(this));
-        }
+        this.onSwitch();
     }
     stop() {
         console.log("Jono's plugin stopping!");
@@ -58,56 +50,6 @@ class JonoPlugin {
             if (el) {
                 BdApi.getInternalInstance(el).return.stateNode.setState({ textValue: "" });
             }
-        };
-        const parseArgs = (cmd, str) => {
-            const getNextIndex = () => {
-                while (true) {
-                    if (str.indexOf("\\:", index + 1) + 1 == (index = str.indexOf(":", index + 1))) {
-                        str = str.slice(0, index - 1) + str.slice(index);
-                        index -= 1;        
-                    } else {
-                        break;
-                    }
-                }
-            };
-
-            let obj = {};
-            if (str.length <= 0) {
-                return obj;
-            }
-
-            let prev_index = 0;
-            let index = 0;
-            getNextIndex();
-
-            // no : in da ting
-            if (index == -1) {
-                str = str.split(" ");
-                const args = cmd.required_args.concat(cmd.optional_args);
-                const len = Math.min(str.length, args.length);
-                
-                for (let i = 0; i < len; ++i) {
-                    obj[args[i]] = str[i];
-                }
-
-                return obj;
-            }
-
-            while (index != -1) {
-                let arg_name = str.slice(prev_index, index).split(" ");
-                arg_name = arg_name[arg_name.length - 1];
-
-                prev_index = index;
-                getNextIndex();
-
-                if (index == -1) {
-                    obj[arg_name] = str.slice(prev_index + 1).trim();
-                } else {
-                    obj[arg_name] = str.slice(prev_index + 1, index).split(" ").slice(0, -1).join(" ").trim();
-                }
-            }
-
-            return obj;
         };
 
         if (e.key != "Enter" || e.shiftKey || e.ctrlKey || e.altKey) {
@@ -156,24 +98,83 @@ class JonoPlugin {
         if (!cmd.callbacks.on_command) {
             return;
         }
-        
-        const args = parseArgs(cmd, input);
+
+        this.onCommand(cmd, input);
+    }
+    onCommand(command, input) {       
+        const parseArgs = (cmd, str) => {
+            // this finds the next : in a line, excluding \: and removing the \ before the :
+            const getNextIndex = () => {
+                while (true) {
+                    if (str.indexOf("\\:", index + 1) + 1 == (index = str.indexOf(":", index + 1))) {
+                        str = str.slice(0, index - 1) + str.slice(index);
+                        index -= 1;        
+                    } else {
+                        break;
+                    }
+                }
+            };
+
+            let obj = {};
+
+            // no arguments
+            if (str.length <= 0) {
+                return obj;
+            }
+
+            let prev_index = 0;
+            let index = 0;
+            getNextIndex();
+
+            // if no : in the line, treat the line as only values which are seperated by a space
+            if (index == -1) {
+                str = str.split(" ");
+                const args = cmd.required_args.concat(cmd.optional_args);
+                const len = Math.min(str.length, args.length);
+                
+                for (let i = 0; i < len; ++i) {
+                    obj[args[i]] = str[i];
+                }
+
+                return obj;
+            }
+
+            // add each key:value pair into obj
+            while (index != -1) {
+                let arg_name = str.slice(prev_index, index).split(" ");
+                arg_name = arg_name[arg_name.length - 1];
+
+                prev_index = index;
+                getNextIndex();
+
+                if (index == -1) {
+                    obj[arg_name] = str.slice(prev_index + 1).trim();
+                } else {
+                    obj[arg_name] = str.slice(prev_index + 1, index).split(" ").slice(0, -1).join(" ").trim();
+                }
+            }
+
+            return obj;
+        };
+
+        const args = parseArgs(command, input);
         
         // check args
         let missing_args = [];
-        for (let i = 0, len = cmd.required_args.length; i < len; ++i) {
-            const arg = cmd.required_args[i];
+        for (let i = 0, len = command.required_args.length; i < len; ++i) {
+            const arg = command.required_args[i];
             if (!(arg in args)) {
                 missing_args.push(arg);
             }
         }
 
+        // if missing args
         if (missing_args.length > 0) {
             JonoUtils.sendBotMessage(JonoUtils.getChannel().id, `Missing arguments: ${missing_args.join(", ")}`);
             return;
         }
 
-        cmd.callbacks.on_command(args);
+        command.callbacks.on_command(args);
     }
 
     addCommand(name, description, required_args, optional_args, callbacks = {}) {
