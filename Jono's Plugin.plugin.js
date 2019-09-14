@@ -14,6 +14,13 @@ class JonoPlugin {
     getAuthor() { 
         return "jono"; 
     }
+    getSettingsPanel() {
+        //let panel = $(`<form class="form" style="width:100%;"></form>`)[0];
+        //new ZLibrary.Settings.SettingGroup(this.getName(), { shown:true }).appendTo(panel);
+        let frog = `<div class="settings-open">test<hr>test</div>`
+
+        return frog;
+    }
 
     start() {
         console.log("Jono's plugin starting!");
@@ -55,8 +62,9 @@ class JonoPlugin {
         const parseArgs = (cmd, str) => {
             const getNextIndex = () => {
                 while (true) {
-                    if (str.indexOf("\\:", index + 2) + 1 == (index = str.indexOf(":", index + 1))) {
+                    if (str.indexOf("\\:", index + 1) + 1 == (index = str.indexOf(":", index + 1))) {
                         str = str.slice(0, index - 1) + str.slice(index);
+                        index -= 1;        
                     } else {
                         break;
                     }
@@ -93,9 +101,9 @@ class JonoPlugin {
                 getNextIndex();
 
                 if (index == -1) {
-                    obj[arg_name] = str.slice(prev_index + 1);
+                    obj[arg_name] = str.slice(prev_index + 1).trim();
                 } else {
-                    obj[arg_name] = str.slice(prev_index + 1, index).split(" ").slice(0, -1).join(" ");
+                    obj[arg_name] = str.slice(prev_index + 1, index).split(" ").slice(0, -1).join(" ").trim();
                 }
             }
 
@@ -253,10 +261,10 @@ class JonoPlugin {
         });
 
         // purge
-        this.addCommand("purge", "Mass deletes your last messages", [], ["amount"])
+        this.addCommand("purge", "Mass deletes your last messages", ["amount"], [])
             .onCommand(async args => {
                 const userid = JonoUtils.getUser().id;
-                let amount = parseInt(args.amount || "50");
+                const amount = parseInt(args.amount);
 
                 let num_purged = 0;
                 let messages = await JonoUtils.getMessages({ userid, amount });
@@ -290,6 +298,63 @@ class JonoPlugin {
                 }
 
                 JonoUtils.sendEmbed(JonoUtils.getChannel().id, embed);
+        });
+
+        // eval
+        this.addCommand("eval", "Evaluates javascript codenz", ["code"], [])
+            .onCommand(args => {
+                JonoUtils.sendMessage(JonoUtils.getChannel().id, String(eval(args.code)));
+        });
+
+        // repeat
+        this.addCommand("repeat", "Repeats text", ["amount", "text"], [])
+            .onCommand(args => {
+                JonoUtils.sendMessage(JonoUtils.getChannel().id, args.text.repeat(args.amount));
+        });
+
+        // clear
+        this.addCommand("clear", "clears chat", [], [])
+            .onCommand(args => {
+                JonoUtils.sendMessage(JonoUtils.getChannel().id, "`." + "\n".repeat(1990) + "cleared`");
+        });
+
+        // imdb
+        this.addCommand("imdb", "search up a movie/show on imdb", ["title"], [])
+            .onCommand(async args => {
+                JonoUtils.loadSettings(this.getName());
+                if (!JonoUtils.settings.omdbapi_api_key) {
+                    JonoUtils.sendBotMessage(JonoUtils.getChannel().id, "`omdbapi.com` API key not provided");
+                    return;
+                }
+
+                JonoUtils.sendMessage(JonoUtils.getChannel().id, `Searching IMDB for \`${args.title}\``);
+
+                const data = await JonoUtils.request_promise({
+                    method: "GET",
+                    uri: "http://www.omdbapi.com",
+                    qs: {
+                        apikey: JonoUtils.settings.omdbapi_api_key,
+                        s: args.title,
+                        r: "json"
+                    },
+                    json: true
+                });
+
+                if (!data.Search && data.Error) {
+                    JonoUtils.sendMessage(JonoUtils.getChannel().id, data.Error);
+                    return;
+                }
+
+                let content = "";
+                data.Search.forEach(movie => {
+                    content += "**[+]** ";
+                    content += "***" + movie.Title + "*** _[" + movie.Type + ", " + movie.Year + "]_";
+                    content += "\n";
+                    content += "<https://www.imdb.com/title/" + movie.imdbID + ">";
+                    content += "\n";
+                });
+
+                JonoUtils.sendMessage(JonoUtils.getChannel().id, content);
         });
 
         this.addCommand("test", "Testing purposes", [], [])
@@ -442,6 +507,22 @@ const JonoUtils = {
     },
     deleteMessage: (channelid, messageid) => {
         JonoUtils.MessageActions.deleteMessage(channelid, messageid);
+    },
+
+    saveSettings: name => {
+        if (!JonoUtils.settings) {
+            JonoUtils.settings = {};
+        }
+
+        BdApi.saveData(name, "settings", JonoUtils.settings);
+    },
+    loadSettings: (name, default_settings = {}) => {
+        JonoUtils.settings = BdApi.loadData(name, "settings") || default_settings;
+        for (const key in default_settings) {
+            if (!(key in JonoUtils.settings)) {
+                JonoUtils.settings[key] = default_settings[key];
+            }
+        }
     },
 
     sleep(ms) {
