@@ -52,6 +52,43 @@ class JonoPlugin {
                 BdApi.getInternalInstance(el).return.stateNode.setState({ textValue: "" });
             }
         };
+        const parseArgs = (cmd, str) => {
+            let obj = {};
+            if (str.length <= 0) {
+                return obj;
+            }
+            
+            if (!str.includes(":")) {
+                str = str.split(" ");
+                const args = cmd.required_args.concat(cmd.optional_args);
+                const len = Math.min(str.length, args.length);
+                
+                for (let i = 0; i < len; ++i) {
+                    obj[args[i]] = str[i];
+                }
+
+                return obj;
+            }
+
+            let prev_index = 0;
+            let index = str.indexOf(":");
+
+            while (index != -1) {
+                let arg_name = str.slice(prev_index, index).split(" ");
+                arg_name = arg_name[arg_name.length - 1];
+
+                prev_index = index;
+                index = str.indexOf(":", index + 1);
+
+                if (index == -1) {
+                    obj[arg_name] = str.slice(prev_index + 1);
+                } else {
+                    obj[arg_name] = str.slice(prev_index + 1, index).split(" ").slice(0, -1).join(" ");
+                }
+            }
+
+            return obj;
+        };
 
         if (e.key != "Enter" || e.shiftKey || e.ctrlKey || e.altKey) {
             return;
@@ -62,99 +99,204 @@ class JonoPlugin {
             return;
         }
 
-        const input = textarea.value;
+        let input = textarea.value;
         if (input.length <= 0) {
             return;
         }
 
-        const args = input.slice(1).split(" ");
-
-        // if not command
+        // if not command, call the on_input() callback
         if (input[0] != '~') {
             for (const key in this.commands) {
-                if (!this.commands[key].on_input) {
+                if (!this.commands[key].callbacks.on_input) {
                     continue;
                 }
 
-                if (!this.commands[key].on_input(input)) {
-                    continue;
+                if (this.commands[key].callbacks.on_input(input)) {
+                    cancelInput();
                 }  
-
-                cancelInput();
             }
+
             return;
         }
 
-        if (args[0] in this.commands) {
-            const cmd = this.commands[args[0]];
-            const num_args_req = cmd.required_args.reduce((total, x) => x.charAt(0) == "?" ? total : total + 1, 0);
+        // dont send the message into chat if its a command
+        cancelInput();
 
-            if (args.length <= num_args_req) {
-                JonoUtils.sendBotMessage(JonoUtils.getChannel().id, `command requires ${num_args_req} arg(s) but ${args.length - 1} were provided`);
-            } else if (cmd.on_command && args.length > num_args_req) {
-                cmd.on_command(args.slice(1));
+        input = input.slice(1).split(" ");
+        const command_name = input[0];
+        input = input.slice(1).join(" ");
+
+        // if command doesn't exist
+        if (!(command_name in this.commands)) {
+            JonoUtils.sendBotMessage(JonoUtils.getChannel().id, "command not found");
+            return
+        }
+
+        const cmd = this.commands[command_name];
+        if (!cmd.callbacks.on_command) {
+            return;
+        }
+        
+        const args = parseArgs(cmd, input);
+        
+        // check args
+        let missing_args = [];
+        for (let i = 0, len = cmd.required_args.length; i < len; ++i) {
+            const arg = cmd.required_args[i];
+            if (!(arg in args)) {
+                missing_args.push(arg);
             }
         }
 
-        cancelInput();
+        if (missing_args.length > 0) {
+            JonoUtils.sendBotMessage(JonoUtils.getChannel().id, `missing arguments: ${missing_args.join(", ")}`);
+            return;
+        }
+
+        cmd.callbacks.on_command(args);
     }
 
-    setupCommands() {
-        this.commands = {
-            purge: new function() {
-                this.description = "mass deletes messages";
-                this.required_args = ["amount"];
-                this.on_command = async args => {
-                    const userid = JonoUtils.getUser().id;
-                    const amount = parseInt(args[0]);
-    
-                    let num_purged = 0;
-                    let messages = await JonoUtils.getMessages({ userid, amount });
-    
-                    for (let i = 0; i < messages.length; ++i) {
-                        ++num_purged;
-                        JonoUtils.deleteMessage(messages[i].channel_id, messages[i].id);
-                        await JonoUtils.sleep(400);
-                    }
-    
-                    JonoUtils.sendBotMessage(JonoUtils.getChannel().id, `purged ${num_purged} messages`);
-                };
-            },
-            seibmoz: new function() {
-                this.description = "toggles seibmoz mode";
-                this.required_args = [];
-                this.on_command = args => {
-                    this.seibmoz_toggle = !this.seibmoz_toggle;
-                    if (this.seibmoz_toggle) {
-                        JonoUtils.sendBotMessage(JonoUtils.getChannel().id, "seibmoz mode activated");
-                    } else {
-                        JonoUtils.sendBotMessage(JonoUtils.getChannel().id, "seibmoz mode deactivated");
-                    }
-                };
-                this.on_input = input => {
-                    if (!this.seibmoz_toggle) {
-                        return false;
-                    }
+    addCommand(name, description, required_args, optional_args, callbacks = {}) {
+        return this.commands[name] = new function() {
+            this.name = name;
+            this.description = description;
+            this.required_args = required_args;
+            this.optional_args = optional_args;
+            this.callbacks = callbacks;
 
-                    JonoUtils.sendMessage(JonoUtils.getChannel().id, `:ok_hand::skin-tone-5: ${input} :ok_hand::skin-tone-5:`);
-                    return true;
-                };
-                this.seibmoz_toggle = false;
-            },
-            test: new function() {
-                this.description = "test";
-                this.required_args = [];
-                this.on_command = args => {
-                    JonoUtils.sendEmbed(JonoUtils.getChannel().id, {
-                        title: "TITLE",
-                        description: "DESCRIPTION"
-                    });
-                };
-                this.on_input = input => {
-
-                };
-            }
+            // allows chaining
+            this.onCommand = on_command => {
+                this.callbacks.on_command = on_command;
+                return this;
+            };
+            this.onInput = on_input => {
+                this.callbacks.on_input = on_input;
+                return this;
+            };
         };
+    }
+    setupCommands() {
+        this.commands = {};
+
+        // help
+        this.addCommand("help", "helps you bruh", [], ["command"])
+            .onCommand(args => {
+                let embed = {
+                    type: "rich",
+                    color: 0x00FF00, // green
+                    fields: []
+                };
+
+                const addCommandField = (command) => {
+                    let description = "*" + command.description + "*\n";
+                
+                    // required args
+                    description += "arguments: [";
+                    if (command.required_args.length > 0) {
+                        description += "**";
+                    }
+                    description += command.required_args.join("**, **");
+                    if (command.required_args.length > 0) {
+                        description += "**";
+                    }
+                    description += "]\n";
+
+                    // optional args
+                    description += "optional: [";
+                    if (command.optional_args.length > 0) {
+                        description += "**";
+                    }
+                    description += command.optional_args.join("**, **");
+                    if (command.optional_args.length > 0) {
+                        description += "**";
+                    }
+                    description += "]\n";
+
+                    embed.fields.push({
+                        inline: false,
+                        name: command.name,
+                        value: description
+                    });
+                }
+
+                if (args.command) {
+                    if (!(args.command in this.commands)) {
+                        embed.color = 0xFF0000; // red
+                        embed.title = "Error";
+                        embed.description = `Failed to find command: **${args.command}**`;
+                    } else {
+                        const command = this.commands[args.command];
+                        addCommandField(command);
+                    }
+                } else {
+                    embed.title = `commands (${Object.keys(this.commands).length}):`;
+
+                    for (const i in this.commands) {
+                        const command = this.commands[i];
+                        addCommandField(command);
+                    }
+                }
+
+                JonoUtils.sendBotEmbed(JonoUtils.getChannel().id, embed);
+        });
+
+        this.addCommand("test", "testing purposes", ["him", "hom"], ["frog"]);
+
+        // this.commands = {
+        //     purge: new function() {
+        //         this.description = "mass deletes messages";
+        //         this.required_args = ["amount"];
+        //         this.on_command = async args => {
+        //             const userid = JonoUtils.getUser().id;
+        //             const amount = parseInt(args[0]);
+    
+        //             let num_purged = 0;
+        //             let messages = await JonoUtils.getMessages({ userid, amount });
+    
+        //             for (let i = 0; i < messages.length; ++i) {
+        //                 ++num_purged;
+        //                 JonoUtils.deleteMessage(messages[i].channel_id, messages[i].id);
+        //                 await JonoUtils.sleep(400);
+        //             }
+    
+        //             JonoUtils.sendBotMessage(JonoUtils.getChannel().id, `purged ${num_purged} messages`);
+        //         };
+        //     },
+        //     seibmoz: new function() {
+        //         this.description = "toggles seibmoz mode";
+        //         this.required_args = [];
+        //         this.on_command = args => {
+        //             this.seibmoz_toggle = !this.seibmoz_toggle;
+        //             if (this.seibmoz_toggle) {
+        //                 JonoUtils.sendBotMessage(JonoUtils.getChannel().id, "seibmoz mode activated");
+        //             } else {
+        //                 JonoUtils.sendBotMessage(JonoUtils.getChannel().id, "seibmoz mode deactivated");
+        //             }
+        //         };
+        //         this.on_input = input => {
+        //             if (!this.seibmoz_toggle) {
+        //                 return false;
+        //             }
+
+        //             JonoUtils.sendMessage(JonoUtils.getChannel().id, `:ok_hand::skin-tone-5: ${input} :ok_hand::skin-tone-5:`);
+        //             return true;
+        //         };
+        //         this.seibmoz_toggle = false;
+        //     },
+        //     test: new function() {
+        //         this.description = "test";
+        //         this.required_args = [];
+        //         this.on_command = args => {
+        //             JonoUtils.sendEmbed(JonoUtils.getChannel().id, {
+        //                 title: "TITLE",
+        //                 description: "DESCRIPTION"
+        //             });
+        //         };
+        //         this.on_input = input => {
+
+        //         };
+        //     }
+        // };
     }
 }
 
@@ -267,8 +409,8 @@ const JonoUtils = {
             tts: false
         });
     },
-    sendEmbed: async (channelid, embed) => {
-        return JonoUtils.request_promise({
+    sendEmbed: (channelid, embed) => {
+        JonoUtils.request_promise({
             method: "POST",
             uri: "https://discordapp.com/api/channels/" + channelid + "/messages",
             headers: {
@@ -277,14 +419,20 @@ const JonoUtils = {
             json: { embed }
         });
     },
-    sendBotMessage: (channel_id, content) => {
-        const msg = JonoUtils.createBotMessage(channel_id, content);
-        JonoUtils.MessageActions.receiveMessage(channel_id, msg);
+    sendBotMessage: (channelid, content) => {
+        const msg = JonoUtils.createBotMessage(channelid, content);
+        JonoUtils.MessageActions.receiveMessage(channelid, msg);
+        return msg;
+    },
+    sendBotEmbed: (channelid, embed) => {
+        let msg = JonoUtils.createBotMessage(channelid, "");
+        msg.embeds = [embed];
+        JonoUtils.MessageActions.receiveMessage(channelid, msg);
         return msg;
     },
 
-    createBotMessage: (channel_id, content, options = { username: "Jono", discriminator: "0069" }) => {
-        let msg = JonoUtils.MessageParser.createMessage(channel_id, content);
+    createBotMessage: (channelid, content, options = { username: "Jono", discriminator: "0069" }) => {
+        let msg = JonoUtils.MessageParser.createMessage(channelid, content);
         msg.author.username = options.username;
         msg.author.discriminator = options.discriminator;
         msg.author.avatar = "clyde";
