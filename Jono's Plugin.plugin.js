@@ -43,21 +43,41 @@ class JonoPlugin {
         }
 
         const message = data.methodArguments[0].message;
-
         // ignore us
         if (message.author.id == JonoUtils.getUser().id) {
             return;
         }
 
-        // max toasts == 5
-        if (JonoUtils.getNumToasts() >= 5) {
+        const channel = JonoUtils.getChannel(message.channel_id);
+        if (!channel) {
             return;
         }
 
-        let content = `<b>${message.author.username}<span style="color:rgb(140, 140, 140)">#${message.author.discriminator}</span></b>\n`;
-        content += JonoUtils.messageToHTML(message);
+        // we're in this channel
+        if (channel.id == JonoUtils.getChannel().id) {
+            return;
+        }
 
-        JonoUtils.showToast(content, { icon_url: JonoUtils.getAvatarURL(message.author), timeout: 5000 });
+        // max toasts == 6
+        if (JonoUtils.getNumToasts() >= 6) {
+            return;
+        }
+
+        // #channelname, guildname
+        let msg_location = "#" + channel.name;
+        if (message.guild_id) {
+            msg_location += ", " + JonoUtils.getGuild(message.guild_id).name;
+        }
+
+        // **username** #channelname, guildname
+        let title = `<span style="height: 20px; position: relative; bottom: 4px">`;
+        title += `<b>${message.author.username}</b> ${msg_location}`;
+        title += `</span>`;
+
+        JonoUtils.showToast(title, JonoUtils.messageToHTML(message), {
+            icon_url: JonoUtils.getAvatarURL(message.author),
+            timeout: 6000
+        });
     }
     onSwitch() {
         // attach keydown listener
@@ -409,6 +429,8 @@ const JonoUtils = {
         JonoUtils.MessageParser = BdApi.findModuleByProps("createMessage", "parse", "unparse");
         JonoUtils.SimpleMarkdown = BdApi.findModuleByProps("parseBlock", "parseInline", "defaultOutput");
         JonoUtils.AvatarDefaults = BdApi.findModuleByProps("getUserAvatarURL", "DEFAULT_AVATARS");
+        JonoUtils.GuildStore = BdApi.findModuleByProps("getGuild");
+        JonoUtils.SelectedGuildStore = BdApi.findModuleByProps("getLastSelectedGuildId");
 
         JonoUtils.request = require("request");
         JonoUtils.request_promise = options => {
@@ -444,11 +466,12 @@ const JonoUtils = {
         return JonoUtils.UserStore.getCurrentUser();
     },
     getChannel: channelid => {
-        if (channelid) {
-            return JonoUtils.ChannelStore.getChannel(channelid);
-        }
-
-        return JonoUtils.ChannelStore.getChannel(JonoUtils.SelectedChannelStore.getChannelId());
+        channelid = channelid || JonoUtils.SelectedChannelStore.getChannelId();
+        return JonoUtils.ChannelStore.getChannel(channelid);
+    },
+    getGuild: guildid => {
+        guildid = guildid || JonoUtils.SelectedGuildStore.getGuildId();
+        return JonoUtils.GuildStore.getGuild(guildid);
     },
     getMessages: async options => { // options: channelid, beforeid, amount, userid
         if (!options) {
@@ -579,7 +602,7 @@ const JonoUtils = {
         }
     },
 
-    showToast: (content, options = {}) => {
+    showToast: (title, content, options = {}) => {
         if (!bdConfig.deferLoaded)
             return;
 
@@ -599,16 +622,18 @@ const JonoUtils = {
 
         // make the toast
         let toast_elem = document.createElement("div");
-        toast_elem.classList.add("toast");
+        toast_elem.classList.add("bd-toast");
+        toast_elem.classList.add("markup-2BOw-j");
+        toast_elem.classList.add("da-markup");
         toast_elem.style = "font-weight:lighter; max-width: 800px";
 
+        let image_html = "";
         // if they have an icon
         if (icon_url) {
-            toast_elem.classList.add("toast-has-icon");
-            toast_elem.innerHTML += `<div class="toast-icon"><img src="${icon_url}" width="20" height="20" /></div>`;
+            image_html = `<img src="${icon_url}" width="20" height="20" style="border-radius: 10px; margin-right:5px" />`;
         }
 
-        toast_elem.innerHTML += `<div>${content}</div>`;
+        toast_elem.innerHTML += `${image_html}${title}<br>${content}`;
 
         // add the toast
         document.querySelector(".bd-toasts").appendChild(toast_elem);
@@ -622,28 +647,73 @@ const JonoUtils = {
                 toast_elem.remove();
 
                 // didn't really understand why they remove the container but turns out its for when the window resizes
-                if (document.querySelectorAll(".bd-toasts .bd-toast").length > 0) {
+                if (document.querySelectorAll(".bd-toasts .bd-toast").length <= 0) {
                     document.querySelector(".bd-toasts").remove();
                 }
             }, 300);
         }, timeout);
     },
     messageToHTML: message => {
-        let content = JonoUtils.SimpleMarkdown.markdownToHtml(message.content);
-        content = content.replace("\n", "<br />");
+        let content = message.content;
 
+        // embeds
+        message.embeds.forEach(embed => {
+            if (embed.title) {
+                content += "**" + embed.title + "**\n";
+            }
+            if (embed.description) {
+                content += embed.description + "\n";
+            }
+
+            embed.fields.forEach(field => {
+                content += "**" + field.name + "**\n";
+                content += field.value + "\n";
+            });
+        });
+
+        content = JonoUtils.SimpleMarkdown.markdownToHtml(content);
+
+        // mentions
         message.mentions.forEach(mention => {
-            const seperator = `
-                <span class="mention wrapperHover-1GktnT wrapper-3WhCwL da-wrapperHover da-wrapper" role="button">
-                    @${mention.username}#${mention.discriminator}
-                </span>`;
+            const seperator = `<span class="mention wrapperHover-1GktnT wrapper-3WhCwL da-wrapperHover da-wrapper">@${mention.username}#${mention.discriminator}</span>`;
             content = content.split(`&lt;@${mention.id}&gt;`).join(seperator);
             content = content.split(`&lt;@!${mention.id}&gt;`).join(seperator);
         });
 
-        // <a:ablobcatdead:585902346853285888>
-        // <@>
-        // <@!>
+        // role mentions
+        if (message.guild_id) {
+            const guild = JonoUtils.getGuild(message.guild_id);
+
+            message.mention_roles.forEach(mentionid => {
+                const role = guild.roles[mentionid];
+                const seperator = `<span class="mention" style="color: ${role.colorString}; background-color: ${role.colorString}25;">@${role.name}</span>`;
+                content = content.split(`&lt;@&amp;${mentionid}&gt;`).join(seperator);
+            });
+        }
+
+        // @everyone
+        content = content.split(`@everyone`).join(`<span class="mention wrapperHover-1GktnT wrapper-3WhCwL da-wrapperHover da-wrapper">@everyone</span>`);
+
+        // channels <#ID>
+        (content.match(/&lt;#\d+?&gt;/g) || []).forEach(x => {
+            const id = x.slice(5, -4);
+            const channel = JonoUtils.getChannel(id);
+            if (!channel) {
+                return;                
+            }
+
+            const seperator = `<span class="mention wrapperHover-1GktnT wrapper-3WhCwL da-wrapperHover da-wrapper">#${channel.name}</span>`;
+            content = content.replace(x, seperator);
+        });
+
+        // emojis <name:id>
+        (content.match(/&lt;:.+?:\d+?&gt;/g) || []).forEach(x => {
+            const sliced = x.slice(5, -4);
+            const name = sliced.slice(0, sliced.indexOf(":"));
+            const id = sliced.slice(sliced.indexOf(":") + 1);
+
+            content = content.replace(x, `<img aria-label=":${name}:" src="https://cdn.discordapp.com/emojis/${id}.png?v=1" alt=":${name}:" class="emoji">`);
+        });
 
         return content;
     },
