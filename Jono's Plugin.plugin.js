@@ -64,9 +64,17 @@ class JonoPlugin {
         }
 
         // #channelname, guildname
-        let msg_location = "#" + channel.name;
+        let msg_location = "";
+        if (channel.type == 1) {
+            msg_location = `<i style="color:red;">Direct Message</i>`;
+        } else {
+            msg_location = "#" + channel.name;
+        }
+
         if (message.guild_id) {
-            msg_location += ", " + JonoUtils.getGuild(message.guild_id).name;
+            const guild = JonoUtils.getGuild(message.guild_id);
+            msg_location += ` <img class="emoji" src="https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.webp" width="20" height="20" style="border-radius: 10px; margin-right:5px" />`;
+            msg_location += guild.name;
         }
 
         // **username** #channelname, guildname
@@ -656,22 +664,31 @@ const JonoUtils = {
     messageToHTML: message => {
         let content = message.content;
 
-        // embeds
-        message.embeds.forEach(embed => {
-            if (embed.title) {
-                content += "**" + embed.title + "**\n";
-            }
-            if (embed.description) {
-                content += embed.description + "\n";
-            }
+        content = JonoUtils.SimpleMarkdown.markdownToHtml(content).trim();
 
-            embed.fields.forEach(field => {
-                content += "**" + field.name + "**\n";
-                content += field.value + "\n";
-            });
+        // attachments
+        (message.attachments || []).forEach(attachment => {
+            content += `<a>${attachment.filename}</a> <i>(${attachment.size} bytes)</i>`;
         });
 
-        content = JonoUtils.SimpleMarkdown.markdownToHtml(content);
+        // embeds
+        (message.embeds || []).forEach(embed => {
+            if (embed.type != "rich") {
+                return;
+            }
+
+            if (embed.title) {
+                content += JonoUtils.SimpleMarkdown.markdownToHtml(embed.title) + "\n";
+            }
+            if (embed.description) {
+                content += JonoUtils.SimpleMarkdown.markdownToHtml(embed.description) + "\n";
+            }
+
+            (embed.fields || []).forEach(field => {
+                content += "<b>" + field.name + "</b>\n";
+                content += JonoUtils.SimpleMarkdown.markdownToHtml(field.value);
+            });
+        });
 
         // mentions
         message.mentions.forEach(mention => {
@@ -706,13 +723,22 @@ const JonoUtils = {
             content = content.replace(x, seperator);
         });
 
-        // emojis <name:id>
+        // static emojis <name:id>
         (content.match(/&lt;:.+?:\d+?&gt;/g) || []).forEach(x => {
             const sliced = x.slice(5, -4);
             const name = sliced.slice(0, sliced.indexOf(":"));
             const id = sliced.slice(sliced.indexOf(":") + 1);
 
-            content = content.replace(x, `<img aria-label=":${name}:" src="https://cdn.discordapp.com/emojis/${id}.png?v=1" alt=":${name}:" class="emoji">`);
+            content = content.replace(x, `<img src="https://cdn.discordapp.com/emojis/${id}.png?v=1" alt=":${name}:" class="emoji">`);
+        });
+
+        // animated emojis <name:id>
+        (content.match(/&lt;a:.+?:\d+?&gt;/g) || []).forEach(x => {
+            const sliced = x.slice(6, -4);
+            const name = sliced.slice(0, sliced.indexOf(":"));
+            const id = sliced.slice(sliced.indexOf(":") + 1);
+
+            content = content.replace(x, `<img src="https://cdn.discordapp.com/emojis/${id}.gif?v=1" alt=":${name}:" class="emoji">`);
         });
 
         return content;
