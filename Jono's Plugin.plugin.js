@@ -2,32 +2,32 @@
 
 // https://github.com/rauenzi/BetterDiscordApp/wiki/Creating-Plugins
 class JonoPlugin {
-    getName() { 
-        return "Jono's Plugin"; 
+    getName() {
+        return "Jono's Plugin";
     }
-    getDescription() { 
-        return "general purpose plugin"; 
+    getDescription() {
+        return "general purpose plugin";
     }
-    getVersion() { 
-        return "1.0"; 
+    getVersion() {
+        return "1.0";
     }
-    getAuthor() { 
-        return "jono"; 
+    getAuthor() {
+        return "jono";
     }
     getSettingsPanel() {
-        let frog = `<div class="settings-open">test<hr>test</div>`
+        let frog = `<div class="settings-open">test<hr>test</div>`;
         return frog;
     }
 
     start() {
-        console.log("Jono's plugin starting!");
-
         JonoUtils.setup();
+        JonoUtils.hookDispatch(this.onDispatch.bind(this));
+
         this.setupCommands();
         this.onSwitch();
     }
     stop() {
-        console.log("Jono's plugin stopping!");
+        JonoUtils.removeDispatchHooks();
 
         // remove keydown listener
         const textarea = JonoUtils.getTextArea();
@@ -36,6 +36,29 @@ class JonoPlugin {
         }
     }
 
+    onDispatch(data) {
+        // only messages
+        if (data.methodArguments[0].type != "MESSAGE_CREATE") {
+            return;
+        }
+
+        const message = data.methodArguments[0].message;
+
+        // ignore us
+        if (message.author.id == JonoUtils.getUser().id) {
+            return;
+        }
+
+        // max toasts == 5
+        if (JonoUtils.getNumToasts() >= 5) {
+            return;
+        }
+
+        let content = `<b>${message.author.username}<span style="color:rgb(140, 140, 140)">#${message.author.discriminator}</span></b>\n`;
+        content += JonoUtils.messageToHTML(message);
+
+        JonoUtils.showToast(content, { icon_url: JonoUtils.getAvatarURL(message.author), timeout: 5000 });
+    }
     onSwitch() {
         // attach keydown listener
         const textarea = JonoUtils.getTextArea();
@@ -75,7 +98,7 @@ class JonoPlugin {
 
                 if (this.commands[key].callbacks.on_input(input)) {
                     cancelInput();
-                }  
+                }
             }
 
             return;
@@ -101,14 +124,14 @@ class JonoPlugin {
 
         this.onCommand(cmd, input);
     }
-    onCommand(command, input) {       
+    onCommand(command, input) {
         const parseArgs = (cmd, str) => {
             // this finds the next : in a line, excluding \: and removing the \ before the :
             const getNextIndex = () => {
                 while (true) {
                     if (str.indexOf("\\:", index + 1) + 1 == (index = str.indexOf(":", index + 1))) {
                         str = str.slice(0, index - 1) + str.slice(index);
-                        index -= 1;        
+                        index -= 1;
                     } else {
                         break;
                     }
@@ -131,7 +154,7 @@ class JonoPlugin {
                 str = str.split(" ");
                 const args = cmd.required_args.concat(cmd.optional_args);
                 const len = Math.min(str.length, args.length);
-                
+
                 for (let i = 0; i < len; ++i) {
                     obj[args[i]] = str[i];
                 }
@@ -158,7 +181,7 @@ class JonoPlugin {
         };
 
         const args = parseArgs(command, input);
-        
+
         // check args
         let missing_args = [];
         for (let i = 0, len = command.required_args.length; i < len; ++i) {
@@ -170,7 +193,7 @@ class JonoPlugin {
 
         // if missing args
         if (missing_args.length > 0) {
-            JonoUtils.sendBotMessage(JonoUtils.getChannel().id, `Missing arguments: ${missing_args.join(", ")}`);
+            JonoUtils.sendBotMessage(JonoUtils.getChannel().id, `Missing arguments: \`${missing_args.join("\`, \`")}\``);
             return;
         }
 
@@ -178,22 +201,24 @@ class JonoPlugin {
     }
 
     addCommand(name, description, required_args, optional_args, callbacks = {}) {
-        return this.commands[name] = new function() {
-            this.name = name;
-            this.description = description;
-            this.required_args = required_args;
-            this.optional_args = optional_args;
-            this.callbacks = callbacks;
+        return this.commands[name] = new class {
+            constructor() {
+                this.name = name;
+                this.description = description;
+                this.required_args = required_args;
+                this.optional_args = optional_args;
+                this.callbacks = callbacks;
+            }
 
             // allows chaining
-            this.onCommand = on_command => {
+            onCommand(on_command) {
                 this.callbacks.on_command = on_command;
                 return this;
-            };
-            this.onInput = on_input => {
+            }
+            onInput(on_input) {
                 this.callbacks.on_input = on_input;
                 return this;
-            };
+            }
         };
     }
     setupCommands() {
@@ -314,17 +339,17 @@ class JonoPlugin {
         });
 
         // clear
-        this.addCommand("clear", "clears chat", [], [])
+        this.addCommand("clear", "Clears chat", [], [])
             .onCommand(args => {
                 JonoUtils.sendMessage(JonoUtils.getChannel().id, "`." + "\n".repeat(1990) + "cleared`");
         });
 
         // imdb
-        this.addCommand("imdb", "search up a movie/show on imdb", ["title"], [])
+        this.addCommand("imdb", "Search up a movie/show on imdb", ["title"], [])
             .onCommand(async args => {
                 JonoUtils.loadSettings(this.getName());
                 if (!JonoUtils.settings.omdbapi_api_key) {
-                    JonoUtils.sendBotMessage(JonoUtils.getChannel().id, "`omdbapi.com` API key not provided");
+                    JonoUtils.sendBotMessage(JonoUtils.getChannel().id, `\`omdbapi.com\` API key not provided\nAdd \`omdbapi_api_key\` to \`${this.getName()}.config.json\``);
                     return;
                 }
 
@@ -358,14 +383,20 @@ class JonoPlugin {
                 JonoUtils.sendMessage(JonoUtils.getChannel().id, content);
         });
 
+        // echo
+        this.addCommand("echo", "Echos stuff", ["text"], [])
+            .onCommand(args => {
+                JonoUtils.sendBotMessage(JonoUtils.getChannel().id, args.text);
+        });
+
         this.addCommand("test", "Testing purposes", [], [])
             .onCommand(args => {
-                console.log(args);
+                console.log(JonoUtils.getNumToasts());
         });
     }
 }
 
-// wrapper around some BdApi functions
+// wrapper around some BdApi functions (heavily inspired by Zere's Library)
 const JonoUtils = {
     setup: () => {
         JonoUtils.MessageActions = BdApi.findModuleByProps("jumpToMessage", "_sendMessage");
@@ -376,6 +407,8 @@ const JonoUtils = {
         JonoUtils.ChannelStore = BdApi.findModuleByProps("getChannels", "getDMFromUserId");
         JonoUtils.MessageStore = BdApi.findModuleByProps("getMessages");
         JonoUtils.MessageParser = BdApi.findModuleByProps("createMessage", "parse", "unparse");
+        JonoUtils.SimpleMarkdown = BdApi.findModuleByProps("parseBlock", "parseInline", "defaultOutput");
+        JonoUtils.AvatarDefaults = BdApi.findModuleByProps("getUserAvatarURL", "DEFAULT_AVATARS");
 
         JonoUtils.request = require("request");
         JonoUtils.request_promise = options => {
@@ -388,6 +421,19 @@ const JonoUtils = {
                 });
             });
         };
+    },
+
+    hookDispatch: func => {
+        const unpatchFunc = BdApi.monkeyPatch(BdApi.findModuleByProps("dispatch"), 'dispatch', { after: func });
+        JonoUtils.unpatchFuncs = JonoUtils.unpatchFuncs || [];
+        JonoUtils.unpatchFuncs.push(unpatchFunc)
+    },
+    removeDispatchHooks: () => {
+        if (!JonoUtils.unpatchFuncs) {
+            return;
+        }
+
+        JonoUtils.unpatchFuncs.forEach(func => func());
     },
 
     getUser: userid => {
@@ -463,6 +509,13 @@ const JonoUtils = {
     getTextArea: () => {
         return document.getElementsByClassName(JonoUtils.TextArea.textArea)[0];
     },
+    getAvatarURL: author => {
+        return JonoUtils.AvatarDefaults.getUserAvatarURL(author);
+    },
+    getNumToasts: () => {
+        const container = document.querySelector(".bd-toasts");
+        return container ? container.children.length : 0;
+    },
 
     sendMessage: (channelid, content) => {
         if (!content) {
@@ -526,6 +579,74 @@ const JonoUtils = {
         }
     },
 
+    showToast: (content, options = {}) => {
+        if (!bdConfig.deferLoaded)
+            return;
+
+        const { icon_url = null, timeout = 3000 } = options;
+
+        // if the container for toasts doesn't exist, create it
+        if (!document.querySelector(".bd-toasts")) {
+            let toastsContainer = document.createElement("div");
+            toastsContainer.classList.add("bd-toasts");     
+
+            let chatForm = document.querySelector(".chat-3bRxxu form, #friends, .noChannel-Z1DQK7, .activityFeed-28jde9");
+            toastsContainer.style.setProperty("left", chatForm ? chatForm.getBoundingClientRect().left + "px" : "0px");
+            toastsContainer.style.setProperty("width", chatForm ? chatForm.offsetWidth + "px" : "100%");
+            toastsContainer.style.setProperty("bottom", (document.querySelector(".chat-3bRxxu form") ? document.querySelector(".chat-3bRxxu form").offsetHeight : 80) + "px");
+            document.querySelector(".app, .app-2rEoOp").appendChild(toastsContainer);
+        }
+
+        // make the toast
+        let toast_elem = document.createElement("div");
+        toast_elem.classList.add("toast");
+        toast_elem.style = "font-weight:lighter; max-width: 800px";
+
+        // if they have an icon
+        if (icon_url) {
+            toast_elem.classList.add("toast-has-icon");
+            toast_elem.innerHTML += `<div class="toast-icon"><img src="${icon_url}" width="20" height="20" /></div>`;
+        }
+
+        toast_elem.innerHTML += `<div>${content}</div>`;
+
+        // add the toast
+        document.querySelector(".bd-toasts").appendChild(toast_elem);
+
+        // remove the toast after timeout has elapsed
+        setTimeout(() => {
+            toast_elem.classList.add("closing");
+
+            // wait 300ms for the closing animation (i think) before actually removing the toast
+            setTimeout(() => {
+                toast_elem.remove();
+
+                // didn't really understand why they remove the container but turns out its for when the window resizes
+                if (document.querySelectorAll(".bd-toasts .bd-toast").length > 0) {
+                    document.querySelector(".bd-toasts").remove();
+                }
+            }, 300);
+        }, timeout);
+    },
+    messageToHTML: message => {
+        let content = JonoUtils.SimpleMarkdown.markdownToHtml(message.content);
+        content = content.replace("\n", "<br />");
+
+        message.mentions.forEach(mention => {
+            const seperator = `
+                <span class="mention wrapperHover-1GktnT wrapper-3WhCwL da-wrapperHover da-wrapper" role="button">
+                    @${mention.username}#${mention.discriminator}
+                </span>`;
+            content = content.split(`&lt;@${mention.id}&gt;`).join(seperator);
+            content = content.split(`&lt;@!${mention.id}&gt;`).join(seperator);
+        });
+
+        // <a:ablobcatdead:585902346853285888>
+        // <@>
+        // <@!>
+
+        return content;
+    },
     sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
