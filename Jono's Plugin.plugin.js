@@ -28,8 +28,8 @@ class JonoPlugin {
                 JonoUtils.saveSettings(this.getName());
             }, "password");
 
-            this.settings_panel.addCheckbox("Enable Notifications", JonoUtils.settings.enable_notifications, value => {
-                JonoUtils.settings.enable_notifications = value;
+            this.settings_panel.addCheckbox("Custom Notifications", JonoUtils.settings.custom_notifications.enabled, value => {
+                JonoUtils.settings.custom_notifications.enabled = value;
                 JonoUtils.saveSettings(this.getName());
             });
         }
@@ -40,11 +40,16 @@ class JonoPlugin {
     start() {
         JonoUtils.setup();
         JonoUtils.hookDispatch(this.onDispatch.bind(this));
+        JonoUtils.hookContextMenu(this.onContextMenu.bind(this));
 
         JonoUtils.loadSettings(this.getName(), {
             command_prefix: "~",
             omdbapi_api_key: "",
-            enable_notifications: true
+            custom_notifications: {
+                enabled: true,
+                muted_guilds: [],
+                muted_channels: []
+            }
         });
 
         this.setupCommands();
@@ -66,15 +71,13 @@ class JonoPlugin {
             return;
         }
 
-        // disabled
-        if (!JonoUtils.settings.enable_notifications) {
+        // custom notifications disabled
+        if (!JonoUtils.settings.custom_notifications.enabled) {
             return;
         }
 
         const message = data.methodArguments[0].message;
-
-        // ignore us
-        if (message.author.id == JonoUtils.getUser().id) {
+        if (!message) {
             return;
         }
 
@@ -90,7 +93,13 @@ class JonoPlugin {
 
         // if not mentioned ignore muted channels
         if (message.mentions.filter(x => x.id == JonoUtils.getUser().id).length <= 0) {
-            if (JonoUtils.ChannelGuildSettings.isGuildOrCategoryOrChannelMuted(message.guild_id || null, message.channel_id)) {
+            // guild is muted
+            if (JonoUtils.settings.custom_notifications.muted_guilds.includes(message.guild_id)) {
+                return;
+            }
+
+            // channel is muted
+            if (JonoUtils.settings.custom_notifications.muted_channels.includes(message.channel_id)) {
                 return;
             }
         }
@@ -123,6 +132,56 @@ class JonoPlugin {
             icon_url: JonoUtils.getAvatarURL(message.author),
             timeout: 6000
         });
+    }
+    onContextMenu() { // credits to the ExtendedContextMenu plugin
+        const context_menu = document.getElementsByClassName(JonoUtils.ContextMenuSelector.contextMenu)[0];
+        if (!context_menu) {
+            return;
+        }
+
+        const react_instance = JonoUtils.getReactInstance(context_menu);
+        if (!react_instance) {
+            return;
+        }
+
+        const props = react_instance.return.memoizedProps;
+        if (!props) {
+            return;
+        }
+
+        const channel = props.channel, guild = props.guild;
+        if (!channel && !guild) {
+            return;
+        }
+
+        const catagory = JonoUtils.createContextMenuCatagory();
+        context_menu.appendChild(catagory);
+
+        if (channel) {
+            catagory.appendChild(JonoUtils.createContextMenuCheckbox("Mute (Jono's Plugin)", JonoUtils.settings.custom_notifications.muted_channels.includes(channel.id), value => {
+                if (value) {
+                    JonoUtils.settings.custom_notifications.muted_channels.push(channel.id);
+                } else {
+                    JonoUtils.settings.custom_notifications.muted_channels.splice(JonoUtils.settings.custom_notifications.muted_channels.indexOf(channel.id), 1);
+                }
+
+                JonoUtils.saveSettings(this.getName());
+            }));
+        } else if (guild) {
+            catagory.appendChild(JonoUtils.createContextMenuCheckbox("Mute (Jono's Plugin)", JonoUtils.settings.custom_notifications.muted_guilds.includes(guild.id), value => {
+                if (value) {
+                    JonoUtils.settings.custom_notifications.muted_guilds.push(guild.id);
+                } else {
+                    JonoUtils.settings.custom_notifications.muted_guilds.splice(JonoUtils.settings.custom_notifications.muted_guilds.indexOf(guild.id), 1);
+                }
+
+                JonoUtils.saveSettings(this.getName());
+            }));
+        }
+
+        if (react_instance.return.stateNode) {
+            react_instance.return.stateNode.props.onHeightUpdate();
+        }
     }
     onSwitch() {
         // attach keydown listener
@@ -477,6 +536,8 @@ const JonoUtils = {
         JonoUtils.GuildStore = BdApi.findModuleByProps("getGuild");
         JonoUtils.SelectedGuildStore = BdApi.findModuleByProps("getLastSelectedGuildId");
         JonoUtils.ChannelGuildSettings = BdApi.findModuleByProps('isGuildOrCategoryOrChannelMuted');
+        JonoUtils.ContextMenuSelector = BdApi.findModuleByProps('contextMenu');
+        JonoUtils.CheckboxSelector = BdApi.findModuleByProps('checkboxInner');
 
         JonoUtils.request = require("request");
         JonoUtils.request_promise = options => {
@@ -498,6 +559,7 @@ const JonoUtils = {
     },
     release: () => {
         JonoUtils.removeDispatchHooks();
+        JonoUtils.removeContextHooks();
 
         clearInterval(JonoUtils.heartbeat_interval);
     },
@@ -514,6 +576,22 @@ const JonoUtils = {
         }
 
         JonoUtils.unpatchFuncs.forEach(func => func());
+        JonoUtils.unpatchFuncs = []
+    },
+
+    // context menu callbacks
+    hookContextMenu: func => {
+        document.addEventListener("contextmenu", func);
+        JonoUtils.contextListeners = JonoUtils.contextListeners || [];
+        JonoUtils.contextListeners.push(func);
+    },
+    removeContextHooks: () => {
+        if (!JonoUtils.contextListeners) {
+            return;
+        }
+
+        JonoUtils.contextListeners.forEach(func => document.removeEventListener("contextmenu", func));
+        JonoUtils.contextListeners = [];
     },
 
     // discordapi
@@ -812,6 +890,75 @@ const JonoUtils = {
         JonoUtils.queued_toasts = JonoUtils.queued_toasts.slice(1);
     },
 
+    createContextMenuCatagory: () => {
+        const div = document.createElement("div");
+        div.className = "itemGroup-1tL0uz da-itemGroup";
+        return div;
+    },
+    createContextMenuButton: (name, callback) => {
+        const div = document.createElement("div");
+        div.role = "button";
+        div.className = JonoUtils.ContextMenuSelector.item + " " + JonoUtils.ContextMenuSelector.clickable;
+        div.onclick = callback;
+
+        const span = document.createElement('span');
+        span.innerText = name;
+
+        const hint = document.createElement('div');
+        hint.className = JonoUtils.ContextMenuSelector.hintClass;
+
+        div.appendChild(span);
+        div.appendChild(hint);
+
+        return div;
+    },
+    createContextMenuCheckbox: (name, value, callback) => {
+        const outer_div = document.createElement("div");
+
+        const main_div = document.createElement("div");
+        main_div.role = "button";
+        main_div.className = `${JonoUtils.ContextMenuSelector.itemBase} ${JonoUtils.ContextMenuSelector.itemToggle} ${JonoUtils.ContextMenuSelector.clickable}`;
+
+        const label = document.createElement("div");
+        label.className = JonoUtils.ContextMenuSelector.label;
+        label.innerText = name;
+
+        const checkbox = document.createElement("div");
+        checkbox.role = "button";
+        checkbox.className = `${JonoUtils.CheckboxSelector.checkbox} ${JonoUtils.ContextMenuSelector.checkbox}`;
+
+        const inner_checkbox = document.createElement("div");
+        inner_checkbox.className = JonoUtils.CheckboxSelector.checkboxInner;
+
+        const checkbox_element = document.createElement("input");
+        checkbox_element.type = "checkbox";
+        checkbox_element.checked = value;
+        checkbox_element.className = JonoUtils.CheckboxSelector.checkboxElement;
+
+        inner_checkbox.appendChild(checkbox_element);
+        inner_checkbox.appendChild(document.createElement("span"));
+
+        checkbox.appendChild(inner_checkbox);
+
+        main_div.appendChild(label);
+        main_div.appendChild(checkbox);
+
+        main_div.onclick = () => {
+            checkbox_element.checked = !checkbox_element.checked;
+            callback(checkbox_element.checked);
+        }
+
+        outer_div.appendChild(main_div);
+        return outer_div;
+    },
+
+    getReactInstance: element => {
+        if (!(element instanceof jQuery) && !(element instanceof Element))
+            return undefined;
+
+        const dom_node = element instanceof jQuery ? element[0] : element;
+        return dom_node[Object.keys(dom_node).find(key => key.startsWith("__reactInternalInstance"))];
+    },
     messageToHTML: message => {
         let content = message.content;
 
