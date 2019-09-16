@@ -1,4 +1,4 @@
-//META{"name":"JonoPlugin"}*//
+//META{"name":"JonoPlugin", "source":"https://github.com/jonomango/jono-plugin/blob/master/Jono's%20Plugin.plugin.js"}*//
 
 // https://github.com/rauenzi/BetterDiscordApp/wiki/Creating-Plugins
 class JonoPlugin {
@@ -15,19 +15,43 @@ class JonoPlugin {
         return "jono";
     }
     getSettingsPanel() {
-        let frog = `<div class="settings-open">test<hr>test</div>`;
-        return frog;
+        if (!this.settings_panel) {
+            this.settings_panel = JonoUtils.createSettingsPanel();
+
+            this.settings_panel.addInput("Command Prefix", JonoUtils.settings.command_prefix, value => {
+                JonoUtils.settings.command_prefix = value;
+                JonoUtils.saveSettings(this.getName());
+            });
+
+            this.settings_panel.addInput("OMDB API Key", JonoUtils.settings.omdbapi_api_key, value => {
+                JonoUtils.settings.omdbapi_api_key = value;
+                JonoUtils.saveSettings(this.getName());
+            }, "password");
+
+            this.settings_panel.addCheckbox("Enable Notifications", JonoUtils.settings.enable_notifications, value => {
+                JonoUtils.settings.enable_notifications = value;
+                JonoUtils.saveSettings(this.getName());
+            });
+        }
+
+        return this.settings_panel.getMainElement();
     }
 
     start() {
         JonoUtils.setup();
         JonoUtils.hookDispatch(this.onDispatch.bind(this));
 
+        JonoUtils.loadSettings(this.getName(), {
+            command_prefix: "~",
+            omdbapi_api_key: "",
+            enable_notifications: true
+        });
+
         this.setupCommands();
         this.onSwitch();
     }
     stop() {
-        JonoUtils.removeDispatchHooks();
+        JonoUtils.release();
 
         // remove keydown listener
         const textarea = JonoUtils.getTextArea();
@@ -42,7 +66,13 @@ class JonoPlugin {
             return;
         }
 
+        // disabled
+        if (!JonoUtils.settings.enable_notifications) {
+            return;
+        }
+
         const message = data.methodArguments[0].message;
+
         // ignore us
         if (message.author.id == JonoUtils.getUser().id) {
             return;
@@ -58,17 +88,24 @@ class JonoPlugin {
             return;
         }
 
-        // max toasts == 6
-        if (JonoUtils.getNumToasts() >= 6) {
-            return;
+        // if not mentioned ignore muted channels
+        if (message.mentions.filter(x => x.id == JonoUtils.getUser().id).length <= 0) {
+            if (JonoUtils.ChannelGuildSettings.isGuildOrCategoryOrChannelMuted(message.guild_id || null, message.channel_id)) {
+                return;
+            }
         }
 
         // #channelname, guildname
         let msg_location = "";
         if (channel.type == 1) {
-            msg_location = `<i style="color:red;">Direct Message</i>`;
+            msg_location = "Direct Message";
         } else {
-            msg_location = "#" + channel.name;
+            msg_location = "#";
+            if (!channel.name) {
+                msg_location += channel.rawRecipients.reduce((total, user) => total ? total + ", " + user.username : user.username, null);
+            } else {
+                msg_location += channel.name;
+            }
         }
 
         if (message.guild_id) {
@@ -79,7 +116,7 @@ class JonoPlugin {
 
         // **username** #channelname, guildname
         let title = `<span style="height: 20px; position: relative; bottom: 4px">`;
-        title += `<b>${message.author.username}</b> ${msg_location}`;
+        title += `<b>${message.author.username}</b> <span style="color:lightgrey;">${msg_location}</span>`;
         title += `</span>`;
 
         JonoUtils.showToast(title, JonoUtils.messageToHTML(message), {
@@ -118,7 +155,7 @@ class JonoPlugin {
         }
 
         // if not command, call the on_input() callback
-        if (input[0] != '~') {
+        if (!input.startsWith(JonoUtils.settings.command_prefix)) {
             for (const key in this.commands) {
                 if (!this.commands[key].callbacks.on_input) {
                     continue;
@@ -135,7 +172,7 @@ class JonoPlugin {
         // dont send the message into chat if its a command
         cancelInput();
 
-        input = input.slice(1).split(" ");
+        input = input.slice(JonoUtils.settings.command_prefix.length).split(" ");
         const command_name = input[0];
         input = input.slice(1).join(" ");
 
@@ -412,7 +449,7 @@ class JonoPlugin {
         });
 
         // echo
-        this.addCommand("echo", "Echos stuff", ["text"], [])
+        this.addCommand("echo", "Echoes stuff", ["text"], [])
             .onCommand(args => {
                 JonoUtils.sendBotMessage(JonoUtils.getChannel().id, args.text);
         });
@@ -439,6 +476,7 @@ const JonoUtils = {
         JonoUtils.AvatarDefaults = BdApi.findModuleByProps("getUserAvatarURL", "DEFAULT_AVATARS");
         JonoUtils.GuildStore = BdApi.findModuleByProps("getGuild");
         JonoUtils.SelectedGuildStore = BdApi.findModuleByProps("getLastSelectedGuildId");
+        JonoUtils.ChannelGuildSettings = BdApi.findModuleByProps('isGuildOrCategoryOrChannelMuted');
 
         JonoUtils.request = require("request");
         JonoUtils.request_promise = options => {
@@ -451,8 +489,20 @@ const JonoUtils = {
                 });
             });
         };
+
+        JonoUtils.heartbeat_interval = setInterval(() => {
+            JonoUtils._flushToasts();
+        }, 500);
+
+        JonoUtils.MAX_TOASTS = 5;
+    },
+    release: () => {
+        JonoUtils.removeDispatchHooks();
+
+        clearInterval(JonoUtils.heartbeat_interval);
     },
 
+    // dispatch callbacks
     hookDispatch: func => {
         const unpatchFunc = BdApi.monkeyPatch(BdApi.findModuleByProps("dispatch"), 'dispatch', { after: func });
         JonoUtils.unpatchFuncs = JonoUtils.unpatchFuncs || [];
@@ -466,6 +516,7 @@ const JonoUtils = {
         JonoUtils.unpatchFuncs.forEach(func => func());
     },
 
+    // discordapi
     getUser: userid => {
         if (userid) {
             return JonoUtils.UserStore.getUser(userid);
@@ -543,10 +594,6 @@ const JonoUtils = {
     getAvatarURL: author => {
         return JonoUtils.AvatarDefaults.getUserAvatarURL(author);
     },
-    getNumToasts: () => {
-        const container = document.querySelector(".bd-toasts");
-        return container ? container.children.length : 0;
-    },
 
     sendMessage: (channelid, content) => {
         if (!content) {
@@ -594,6 +641,7 @@ const JonoUtils = {
         JonoUtils.MessageActions.deleteMessage(channelid, messageid);
     },
 
+    // settings
     saveSettings: name => {
         if (!JonoUtils.settings) {
             JonoUtils.settings = {};
@@ -603,14 +651,102 @@ const JonoUtils = {
     },
     loadSettings: (name, default_settings = {}) => {
         JonoUtils.settings = BdApi.loadData(name, "settings") || default_settings;
+
         for (const key in default_settings) {
             if (!(key in JonoUtils.settings)) {
                 JonoUtils.settings[key] = default_settings[key];
             }
         }
     },
+    createSettingsPanel: () => {
+        return new class {
+            constructor() {
+                this.main_div = document.createElement("div");
+            }
 
+            getMainElement() {
+                return this.main_div;
+            }
+
+            addInput(name, value, callback, type = "text") {
+                const element = document.createElement("input");
+
+                element.onchange = () => { callback(element.value); };
+
+                element.setAttribute("type", type);
+                element.setAttribute("style", "margin:6px; margin-left: 0px");
+                element.setAttribute("placeholder", name);
+                element.setAttribute("value", value);
+
+                if (this.main_div.children.length > 0) {
+                    this.main_div.appendChild(document.createElement("br"));
+                }
+
+                this.main_div.appendChild(element);
+                this.main_div.appendChild(document.createTextNode(name));
+            }
+            addCheckbox(name, value, callback) {          
+                const bda_controls = document.createElement("span");
+                bda_controls.classList.add("bda-controls");
+
+                const label = document.createElement("element");
+                label.classList.add("ui-switch-wrapper");
+                label.classList.add("ui-flex-child");
+                label.style = "flex: 0 0 auto";
+
+                const input = document.createElement("input");
+                input.classList.add("ui-switch-checkbox");
+                input.type = "checkbox";
+                input.checked = value;
+                input.onchange = () => { 
+                    div.classList = ["ui-switch"];
+                    if (input.checked) {
+                        div.classList.add("checked");
+                    }
+
+                    callback(input.checked); 
+                };
+
+                const div = document.createElement("div");
+                div.classList.add("ui-switch");
+
+                if (value) {
+                    div.classList.add("checked");
+                }
+
+                label.appendChild(input);
+                label.appendChild(div);
+         
+                const text_div = document.createElement("div");
+                text_div.style = "margin-left: 6px; align-self: center";
+                text_div.appendChild(document.createTextNode(name));
+
+                bda_controls.appendChild(label);
+                bda_controls.appendChild(text_div);
+
+                this.main_div.appendChild(bda_controls);
+            }
+        };
+    },
+
+    // toasts
+    numToasts: () => {
+        const container = document.querySelector(".bd-toasts");
+        return container ? container.children.length : 0;
+    },
     showToast: (title, content, options = {}) => {
+        JonoUtils._flushToasts();
+
+        // if not focused or too many toasts
+        if (!document.hasFocus() || JonoUtils.numToasts() >= JonoUtils.MAX_TOASTS) {
+            JonoUtils.queued_toasts = JonoUtils.queued_toasts || [];
+            JonoUtils.queued_toasts.push({ title, content, options });
+            return;
+        } 
+
+        JonoUtils._showToast(title, content, options);
+    },
+    _showToast: (title, content, options) => {
         if (!bdConfig.deferLoaded)
             return;
 
@@ -661,6 +797,21 @@ const JonoUtils = {
             }, 300);
         }, timeout);
     },
+    _flushToasts: () => {
+        if (!document.hasFocus() || JonoUtils.numToasts() >= JonoUtils.MAX_TOASTS) {
+            return;
+        }
+
+        JonoUtils.queued_toasts = JonoUtils.queued_toasts || [];
+        if (JonoUtils.queued_toasts.length <= 0) {
+            return
+        }
+
+        const toast = JonoUtils.queued_toasts[0];
+        JonoUtils._showToast(toast.title, toast.content, toast.options);
+        JonoUtils.queued_toasts = JonoUtils.queued_toasts.slice(1);
+    },
+
     messageToHTML: message => {
         let content = message.content;
 
