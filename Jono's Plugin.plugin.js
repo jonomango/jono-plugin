@@ -18,13 +18,18 @@ class JonoPlugin {
         if (!this.settings_panel) {
             this.settings_panel = JonoUtils.createSettingsPanel();
 
-            this.settings_panel.addInput("Command Prefix", JonoUtils.settings.command_prefix, value => {
+            this.settings_panel.addInput("Command Prefix", "Command Prefix", JonoUtils.settings.command_prefix, value => {
                 JonoUtils.settings.command_prefix = value;
                 JonoUtils.saveSettings(this.getName());
             });
 
-            this.settings_panel.addInput("OMDB API Key", JonoUtils.settings.omdbapi_api_key, value => {
-                JonoUtils.settings.omdbapi_api_key = value;
+            this.settings_panel.addInput("API Key: omdbapi.com", "API Key", JonoUtils.settings.api_keys.omdbapi, value => {
+                JonoUtils.settings.api_keys.omdbapi = value;
+                JonoUtils.saveSettings(this.getName());
+            }, "password");
+
+            this.settings_panel.addInput("API Key: ipdata.co", "API Key", JonoUtils.settings.api_keys.ipdata, value => {
+                JonoUtils.settings.api_keys.ipdata = value;
                 JonoUtils.saveSettings(this.getName());
             }, "password");
 
@@ -39,16 +44,21 @@ class JonoPlugin {
 
     start() {
         JonoUtils.setup();
+
         JonoUtils.hookDispatch(this.onDispatch.bind(this));
         JonoUtils.hookContextMenu(this.onContextMenu.bind(this));
 
         JonoUtils.loadSettings(this.getName(), {
             command_prefix: "~",
-            omdbapi_api_key: "",
             custom_notifications: {
                 enabled: true,
+                duration: 8000,
                 muted_guilds: [],
                 muted_channels: []
+            },
+            api_keys: {
+                omdbapi: "",
+                ipdata: ""
             }
         });
 
@@ -56,13 +66,15 @@ class JonoPlugin {
         this.onSwitch();
     }
     stop() {
-        JonoUtils.release();
+        JonoUtils.saveSettings(this.getName());
 
         // remove keydown listener
         const textarea = JonoUtils.getTextArea();
         if (textarea) {
             textarea.removeEventListener("keydown", this.keydownEventListener);
         }
+
+        JonoUtils.release();
     }
 
     onDispatch(data) {
@@ -91,7 +103,7 @@ class JonoPlugin {
             return;
         }
 
-        // if not mentioned ignore muted channels
+        // if not mentioned, ignore muted channels
         if (message.mentions.filter(x => x.id == JonoUtils.getUser().id).length <= 0) {
             // guild is muted
             if (JonoUtils.settings.custom_notifications.muted_guilds.includes(message.guild_id)) {
@@ -104,11 +116,11 @@ class JonoPlugin {
             }
         }
 
-        // #channelname, guildname
         let msg_location = "";
         if (channel.type == 1) {
             msg_location = "Direct Message";
         } else {
+            // #channelname, guildname
             msg_location = "#";
             if (!channel.name) {
                 msg_location += channel.rawRecipients.reduce((total, user) => total ? total + ", " + user.username : user.username, null);
@@ -124,13 +136,13 @@ class JonoPlugin {
         }
 
         // **username** #channelname, guildname
-        let title = `<span style="height: 20px; position: relative; bottom: 4px">`;
+        let title = `<span style="position: relative; bottom: 4px">`;
         title += `<b>${message.author.username}</b> <span style="color:lightgrey;">${msg_location}</span>`;
         title += `</span>`;
 
         JonoUtils.showToast(title, JonoUtils.messageToHTML(message), {
             icon_url: JonoUtils.getAvatarURL(message.author),
-            timeout: 6000
+            timeout: JonoUtils.settings.custom_notifications.duration
         });
     }
     onContextMenu() { // credits to the ExtendedContextMenu plugin
@@ -428,28 +440,6 @@ class JonoPlugin {
                 JonoUtils.sendBotMessage(JonoUtils.getChannel().id, `Purged ${num_purged} messages`);
         });
 
-        // embed
-        this.addCommand("embed", "Sends an embedded message in the current channel", [], ["title", "description", "color", "image"])
-            .onCommand(args => {
-                let embed = {};
-
-                if (args.title) {
-                    embed.title = args.title;
-                }
-                if (args.description) {
-                    embed.description = args.description;
-                }
-                if (args.color) {
-                    embed.color = parseInt(args.color, 16);
-                }
-                if (args.image) {
-                    embed.image = {};
-                    embed.image.url = args.image;
-                }
-
-                JonoUtils.sendEmbed(JonoUtils.getChannel().id, embed);
-        });
-
         // eval
         this.addCommand("eval", "Evaluates javascript codenz", ["code"], [])
             .onCommand(args => {
@@ -471,9 +461,8 @@ class JonoPlugin {
         // imdb
         this.addCommand("imdb", "Search up a movie/show on imdb", ["title"], [])
             .onCommand(async args => {
-                JonoUtils.loadSettings(this.getName());
-                if (!JonoUtils.settings.omdbapi_api_key) {
-                    JonoUtils.sendBotMessage(JonoUtils.getChannel().id, `\`omdbapi.com\` API key not provided\nAdd \`omdbapi_api_key\` to \`${this.getName()}.config.json\``);
+                if (!JonoUtils.settings.api_keys.omdbapi) {
+                    JonoUtils.sendBotMessage(JonoUtils.getChannel().id, `\`omdbapi.com\` API key not provided\n`);
                     return;
                 }
 
@@ -483,7 +472,7 @@ class JonoPlugin {
                     method: "GET",
                     uri: "http://www.omdbapi.com",
                     qs: {
-                        apikey: JonoUtils.settings.omdbapi_api_key,
+                        apikey: JonoUtils.settings.api_keys.omdbapi,
                         s: args.title,
                         r: "json"
                     },
@@ -505,6 +494,105 @@ class JonoPlugin {
                 });
 
                 JonoUtils.sendMessage(JonoUtils.getChannel().id, content);
+        });
+
+        // ipdata
+        this.addCommand("ipdata", "Shows information about a specific ip", ["ip"], [])
+            .onCommand(async args => {
+                if (!JonoUtils.settings.api_keys.ipdata) {
+                    JonoUtils.sendBotMessage(JonoUtils.getChannel().id, `\`ipdata.co\` API key not provided\n`);
+                    return;
+                }
+
+                const response = await JonoUtils.request_promise({
+                    uri: `https://api.ipdata.co/${args.ip}`,
+                    qs: {
+                        "api-key": JonoUtils.settings.api_keys.ipdata
+                    },
+                    json: true
+                });
+                
+                if (!response) {
+                    JonoUtils.sendBotMessage(JonoUtils.getChannel().id, "Error requesting data");
+                    return;
+                }
+
+                if (response.message) {
+                    JonoUtils.sendBotMessage(JonoUtils.getChannel().id, response.message);
+                    return;
+                }
+                
+                const embed = {
+                    color: 0x00FF00,
+                    type: "rich",
+                    title: args.ip,
+                    fields: []
+                };
+
+                // continent
+                if (response.continent_name) {
+                    embed.fields.push({
+                        inline: true,
+                        name: "Continent",
+                        value: response.continent_name
+                    });
+                }
+
+                // country
+                if (response.country_name) {
+                    embed.fields.push({
+                        inline: true,
+                        name: "Country",
+                        value: response.country_name
+                    });
+                }
+
+                // region
+                if (response.region) {
+                    embed.fields.push({
+                        inline: true,
+                        name: "Region",
+                        value: response.region
+                    });
+                }
+
+                // city
+                if (response.city) {
+                    embed.fields.push({
+                        inline: true,
+                        name: "City",
+                        value: response.city
+                    });
+                }
+
+                // postal
+                if (response.postal) {
+                    embed.fields.push({
+                        inline: true,
+                        name: "Postal Code",
+                        value: response.postal
+                    });
+                }
+
+                // TOR / proxy
+                if (response.threat) {
+                    embed.fields.push({
+                        inline: true,
+                        name: "Tor / Proxy",
+                        value: response.threat.is_anonymous ? "True" : "False"
+                    });
+                }
+
+                // ASN
+                if (response.asn) {
+                    embed.fields.push({
+                        inline: true,
+                        name: `ASN (${response.asn.type})`,
+                        value: response.asn.name
+                    });
+                }
+
+                JonoUtils.sendBotEmbed(JonoUtils.getChannel().id, embed);
         });
 
         // echo
@@ -536,8 +624,11 @@ const JonoUtils = {
         JonoUtils.GuildStore = BdApi.findModuleByProps("getGuild");
         JonoUtils.SelectedGuildStore = BdApi.findModuleByProps("getLastSelectedGuildId");
         JonoUtils.ChannelGuildSettings = BdApi.findModuleByProps('isGuildOrCategoryOrChannelMuted');
-        JonoUtils.ContextMenuSelector = BdApi.findModuleByProps('contextMenu');
-        JonoUtils.CheckboxSelector = BdApi.findModuleByProps('checkboxInner');
+
+        JonoUtils.ContextMenuSelector = BdApi.findModuleByProps("contextMenu");
+        JonoUtils.CheckboxSelector = BdApi.findModuleByProps("checkboxInner");
+        JonoUtils.MarkupSelector = BdApi.findModuleByProps("markup");
+        JonoUtils.MessagesSelector = BdApi.findModuleByProps("username");
 
         JonoUtils.request = require("request");
         JonoUtils.request_promise = options => {
@@ -730,11 +821,19 @@ const JonoUtils = {
     loadSettings: (name, default_settings = {}) => {
         JonoUtils.settings = BdApi.loadData(name, "settings") || default_settings;
 
-        for (const key in default_settings) {
-            if (!(key in JonoUtils.settings)) {
-                JonoUtils.settings[key] = default_settings[key];
+        const recursive_func = (settings, def) => {
+            for (const key in def) {
+                if (!(key in settings)) {
+                    settings[key] = def[key];
+                }
+
+                if (typeof(def[key]) == "object") {
+                    recursive_func(settings[key], def[key]);
+                }
             }
-        }
+        };
+
+        recursive_func(JonoUtils.settings, default_settings);
     },
     createSettingsPanel: () => {
         return new class {
@@ -746,14 +845,14 @@ const JonoUtils = {
                 return this.main_div;
             }
 
-            addInput(name, value, callback, type = "text") {
+            addInput(name, placeholder, value, callback, type = "text") {
                 const element = document.createElement("input");
 
                 element.onchange = () => { callback(element.value); };
 
                 element.setAttribute("type", type);
                 element.setAttribute("style", "margin:6px; margin-left: 0px");
-                element.setAttribute("placeholder", name);
+                element.setAttribute("placeholder", placeholder);
                 element.setAttribute("value", value);
 
                 if (this.main_div.children.length > 0) {
@@ -844,9 +943,7 @@ const JonoUtils = {
 
         // make the toast
         let toast_elem = document.createElement("div");
-        toast_elem.classList.add("bd-toast");
-        toast_elem.classList.add("markup-2BOw-j");
-        toast_elem.classList.add("da-markup");
+        toast_elem.className = "bd-toast " + JonoUtils.MarkupSelector.markup;
         toast_elem.style = "font-weight:lighter; max-width: 800px";
 
         let image_html = "";
@@ -890,6 +987,7 @@ const JonoUtils = {
         JonoUtils.queued_toasts = JonoUtils.queued_toasts.slice(1);
     },
 
+    // context menu stuff
     createContextMenuCatagory: () => {
         const div = document.createElement("div");
         div.className = "itemGroup-1tL0uz da-itemGroup";
