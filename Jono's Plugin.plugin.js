@@ -37,6 +37,11 @@ class JonoPlugin {
                 JonoUtils.settings.custom_notifications.enabled = value;
                 JonoUtils.saveSettings(this.getName());
             });
+
+            this.settings_panel.addInput("Notification Duration", "Duration", JonoUtils.settings.custom_notifications.duration, value => {
+                JonoUtils.settings.custom_notifications.duration = value;
+                JonoUtils.saveSettings(this.getName());
+            }, "number");
         }
 
         return this.settings_panel.getMainElement();
@@ -52,7 +57,7 @@ class JonoPlugin {
             command_prefix: "~",
             custom_notifications: {
                 enabled: true,
-                duration: 8000,
+                duration: 6000,
                 muted_guilds: [],
                 muted_channels: []
             },
@@ -93,6 +98,11 @@ class JonoPlugin {
             return;
         }
 
+        // ignore messages from us
+        if (message.author.id == JonoUtils.getUser().id) {
+            return;
+        }
+
         const channel = JonoUtils.getChannel(message.channel_id);
         if (!channel) {
             return;
@@ -123,12 +133,22 @@ class JonoPlugin {
             // #channelname, guildname
             msg_location = "#";
             if (!channel.name) {
-                msg_location += channel.rawRecipients.reduce((total, user) => total ? total + ", " + user.username : user.username, null);
+                msg_location += channel.recipients.reduce((total, user) => {
+                    user = JonoUtils.getUser(user);
+                    if (!user) {
+                        return total;
+                    }
+                    if (!total) {
+                        return user.username;
+                    }
+                    return total + ", " + user.username;
+                }, null);
             } else {
                 msg_location += channel.name;
             }
         }
 
+        // guild icon
         if (message.guild_id) {
             const guild = JonoUtils.getGuild(message.guild_id);
             msg_location += ` <img class="emoji" src="https://cdn.discordapp.com/icons/${guild.id}/${guild.icon}.webp" width="20" height="20" style="border-radius: 10px; margin-right:5px" />`;
@@ -142,7 +162,10 @@ class JonoPlugin {
 
         JonoUtils.showToast(title, JonoUtils.messageToHTML(message), {
             icon_url: JonoUtils.getAvatarURL(message.author),
-            timeout: JonoUtils.settings.custom_notifications.duration
+            duration: JonoUtils.settings.custom_notifications.duration,
+            callback: () => {
+                JonoUtils.ChannelActions.selectChannel(message.guild_id || null, message.channel_id);
+            }
         });
     }
     onContextMenu() { // credits to the ExtendedContextMenu plugin
@@ -623,7 +646,8 @@ const JonoUtils = {
         JonoUtils.AvatarDefaults = BdApi.findModuleByProps("getUserAvatarURL", "DEFAULT_AVATARS");
         JonoUtils.GuildStore = BdApi.findModuleByProps("getGuild");
         JonoUtils.SelectedGuildStore = BdApi.findModuleByProps("getLastSelectedGuildId");
-        JonoUtils.ChannelGuildSettings = BdApi.findModuleByProps('isGuildOrCategoryOrChannelMuted');
+        JonoUtils.ChannelGuildSettings = BdApi.findModuleByProps("isGuildOrCategoryOrChannelMuted");
+        JonoUtils.ChannelActions = BdApi.findModuleByProps("selectChannel");
 
         JonoUtils.ContextMenuSelector = BdApi.findModuleByProps("contextMenu");
         JonoUtils.CheckboxSelector = BdApi.findModuleByProps("checkboxInner");
@@ -647,6 +671,7 @@ const JonoUtils = {
         }, 500);
 
         JonoUtils.MAX_TOASTS = 5;
+        JonoUtils.MAX_TOASTS_QUEUE = 10;
     },
     release: () => {
         JonoUtils.removeDispatchHooks();
@@ -844,7 +869,6 @@ const JonoUtils = {
             getMainElement() {
                 return this.main_div;
             }
-
             addInput(name, placeholder, value, callback, type = "text") {
                 const element = document.createElement("input");
 
@@ -855,12 +879,10 @@ const JonoUtils = {
                 element.setAttribute("placeholder", placeholder);
                 element.setAttribute("value", value);
 
-                if (this.main_div.children.length > 0) {
-                    this.main_div.appendChild(document.createElement("br"));
-                }
-
                 this.main_div.appendChild(element);
                 this.main_div.appendChild(document.createTextNode(name));
+
+                this.main_div.appendChild(document.createElement("br"));
             }
             addCheckbox(name, value, callback) {          
                 const bda_controls = document.createElement("span");
@@ -917,7 +939,10 @@ const JonoUtils = {
         // if not focused or too many toasts
         if (!document.hasFocus() || JonoUtils.numToasts() >= JonoUtils.MAX_TOASTS) {
             JonoUtils.queued_toasts = JonoUtils.queued_toasts || [];
-            JonoUtils.queued_toasts.push({ title, content, options });
+            if (JonoUtils.queued_toasts.length < JonoUtils.MAX_TOASTS_QUEUE) {
+                JonoUtils.queued_toasts.push({ title, content, options });
+            }
+
             return;
         } 
 
@@ -927,7 +952,7 @@ const JonoUtils = {
         if (!bdConfig.deferLoaded)
             return;
 
-        const { icon_url = null, timeout = 3000 } = options;
+        const { icon_url = null, duration = 3000, callback = null } = options;
 
         // if the container for toasts doesn't exist, create it
         if (!document.querySelector(".bd-toasts")) {
@@ -944,9 +969,10 @@ const JonoUtils = {
         // make the toast
         let toast_elem = document.createElement("div");
         toast_elem.className = "bd-toast " + JonoUtils.MarkupSelector.markup;
-        toast_elem.style = "font-weight:lighter; max-width: 800px";
+        toast_elem.style = "font-weight:lighter; max-width: 800px; pointer-events: auto;";
 
         let image_html = "";
+
         // if they have an icon
         if (icon_url) {
             image_html = `<img src="${icon_url}" width="20" height="20" style="border-radius: 10px; margin-right:5px" />`;
@@ -954,11 +980,8 @@ const JonoUtils = {
 
         toast_elem.innerHTML += `${image_html}${title}<br>${content}`;
 
-        // add the toast
-        document.querySelector(".bd-toasts").appendChild(toast_elem);
-
-        // remove the toast after timeout has elapsed
-        setTimeout(() => {
+        // this removes the toast
+        const removeToast = () => {
             toast_elem.classList.add("closing");
 
             // wait 300ms for the closing animation (i think) before actually removing the toast
@@ -970,7 +993,23 @@ const JonoUtils = {
                     document.querySelector(".bd-toasts").remove();
                 }
             }, 300);
-        }, timeout);
+        };
+
+        // remove the toast after timeout has elapsed
+        const timeout = setTimeout(removeToast, duration);
+
+        // if callback provided, add dis stuff
+        if (callback) {
+            toast_elem.style.cursor = "pointer";
+            toast_elem.onclick = () => {
+                clearTimeout(timeout);
+                removeToast();
+                callback();
+            }
+        }
+
+        // add the toast
+        document.querySelector(".bd-toasts").appendChild(toast_elem);
     },
     _flushToasts: () => {
         if (!document.hasFocus() || JonoUtils.numToasts() >= JonoUtils.MAX_TOASTS) {
@@ -1058,7 +1097,17 @@ const JonoUtils = {
         return dom_node[Object.keys(dom_node).find(key => key.startsWith("__reactInternalInstance"))];
     },
     messageToHTML: message => {
-        let content = message.content;
+        let content = "";
+        switch (message.type) {
+            case 0: content = message.content; break;
+            case 1: content = `Added <@${message.mentions[0].id}> to the group.`; break;
+            case 2: content = `Removed <@${message.mentions[0].id}> from the group.`; break;
+            case 3: content = "Incoming voice call."; break;
+            case 4: content = `Changed the channel name to <#${message.channel_id}>`; break;
+            case 5: content = "Changed the channel icon."; break;
+            case 6: content = "Pinned a message to this channel."; break;
+            case 7: content = "Joined the server."; break;
+        }
 
         content = JonoUtils.SimpleMarkdown.markdownToHtml(content).trim();
 
@@ -1086,11 +1135,18 @@ const JonoUtils = {
             });
         });
 
-        // mentions
-        message.mentions.forEach(mention => {
-            const seperator = `<span class="mention wrapperHover-1GktnT wrapper-3WhCwL da-wrapperHover da-wrapper">@${mention.username}#${mention.discriminator}</span>`;
-            content = content.split(`&lt;@${mention.id}&gt;`).join(seperator);
-            content = content.split(`&lt;@!${mention.id}&gt;`).join(seperator);
+        // mentions <@ID>
+        (content.match(/&lt;@\d+?&gt;/g) || []).forEach(x => {        
+            const id = x.slice(5, -4);
+            const user = JonoUtils.getUser(id);
+
+            let username = x;
+            if (user) {
+                username = user.username;
+            }
+
+            const seperator = `<span class="mention wrapperHover-1GktnT wrapper-3WhCwL da-wrapperHover da-wrapper">@${username}</span>`;
+            content = content.replace(x, seperator);
         });
 
         // role mentions
