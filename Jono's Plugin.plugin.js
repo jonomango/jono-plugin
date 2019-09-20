@@ -22,16 +22,8 @@ class JonoPlugin {
                 JonoUtils.settings.command_prefix = value;
                 JonoUtils.saveSettings(this.getName());
             });
-
-            this.settings_panel.addInput("API Key: omdbapi.com", "API Key", JonoUtils.settings.api_keys.omdbapi, value => {
-                JonoUtils.settings.api_keys.omdbapi = value;
-                JonoUtils.saveSettings(this.getName());
-            }, "password");
-
-            this.settings_panel.addInput("API Key: ipdata.co", "API Key", JonoUtils.settings.api_keys.ipdata, value => {
-                JonoUtils.settings.api_keys.ipdata = value;
-                JonoUtils.saveSettings(this.getName());
-            }, "password");
+            
+            this.settings_panel.addHorizontalRule();
 
             this.settings_panel.addCheckbox("Custom Notifications", JonoUtils.settings.custom_notifications.enabled, value => {
                 JonoUtils.settings.custom_notifications.enabled = value;
@@ -42,6 +34,18 @@ class JonoPlugin {
                 JonoUtils.settings.custom_notifications.duration = value;
                 JonoUtils.saveSettings(this.getName());
             }, "number");
+
+            this.settings_panel.addHorizontalRule();
+
+            this.settings_panel.addInput("API Key: omdbapi.com", "API Key", JonoUtils.settings.api_keys.omdbapi, value => {
+                JonoUtils.settings.api_keys.omdbapi = value;
+                JonoUtils.saveSettings(this.getName());
+            }, "password");
+
+            this.settings_panel.addInput("API Key: ipdata.co", "API Key", JonoUtils.settings.api_keys.ipdata, value => {
+                JonoUtils.settings.api_keys.ipdata = value;
+                JonoUtils.saveSettings(this.getName());
+            }, "password");
         }
 
         return this.settings_panel.getMainElement();
@@ -109,7 +113,7 @@ class JonoPlugin {
         }
 
         // we're in this channel
-        if (channel.id == JonoUtils.getChannel().id) {
+        if (channel.id == JonoUtils.getCurrentChannelID()) {
             return;
         }
 
@@ -157,7 +161,7 @@ class JonoPlugin {
 
         // **username** #channelname, guildname
         let title = `<span style="position: relative; bottom: 4px">`;
-        title += `<b>${message.author.username}</b> <span style="color:lightgrey;">${msg_location}</span>`;
+        title += `<b>${JonoUtils.encodeHTMLEntities(message.author.username)}</b> <span style="color:lightgrey;">${msg_location}</span>`;
         title += `</span>`;
 
         JonoUtils.showToast(title, JonoUtils.messageToHTML(message), {
@@ -272,7 +276,7 @@ class JonoPlugin {
 
         // if command doesn't exist
         if (!(command_name in this.commands)) {
-            JonoUtils.sendBotMessage(JonoUtils.getChannel().id, "Command not found");
+            JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), "Command not found");
             return
         }
 
@@ -284,56 +288,19 @@ class JonoPlugin {
         this.onCommand(cmd, input);
     }
     onCommand(command, input) {
+        // TODO: account for ""
         const parseArgs = (cmd, str) => {
-            // this finds the next : in a line, excluding \: and removing the \ before the :
-            const getNextIndex = () => {
-                while (true) {
-                    if (str.indexOf("\\:", index + 1) + 1 == (index = str.indexOf(":", index + 1))) {
-                        str = str.slice(0, index - 1) + str.slice(index);
-                        index -= 1;
-                    } else {
-                        break;
-                    }
-                }
-            };
+            if (!str) {
+                return {};
+            }
 
+            let args = str.split(" ");
             let obj = {};
 
-            // no arguments
-            if (str.length <= 0) {
-                return obj;
-            }
-
-            let prev_index = 0;
-            let index = 0;
-            getNextIndex();
-
-            // if no : in the line, treat the line as only values which are seperated by a space
-            if (index == -1) {
-                str = str.split(" ");
-                const args = cmd.required_args.concat(cmd.optional_args);
-                const len = Math.min(str.length, args.length);
-
-                for (let i = 0; i < len; ++i) {
-                    obj[args[i]] = str[i];
-                }
-
-                return obj;
-            }
-
-            // add each key:value pair into obj
-            while (index != -1) {
-                let arg_name = str.slice(prev_index, index).split(" ");
-                arg_name = arg_name[arg_name.length - 1];
-
-                prev_index = index;
-                getNextIndex();
-
-                if (index == -1) {
-                    obj[arg_name] = str.slice(prev_index + 1).trim();
-                } else {
-                    obj[arg_name] = str.slice(prev_index + 1, index).split(" ").slice(0, -1).join(" ").trim();
-                }
+            const cmd_args = cmd.required_args.concat(cmd.optional_args);
+            const num_args = Math.min(cmd_args.length, args.length);
+            for (let i = 0; i < num_args; ++i) {
+                obj[cmd_args[i]] = args[i];
             }
 
             return obj;
@@ -352,7 +319,7 @@ class JonoPlugin {
 
         // if missing args
         if (missing_args.length > 0) {
-            JonoUtils.sendBotMessage(JonoUtils.getChannel().id, `Missing arguments: \`${missing_args.join("\`, \`")}\``);
+            JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), `Missing arguments: \`${missing_args.join("\`, \`")}\``);
             return;
         }
 
@@ -442,7 +409,7 @@ class JonoPlugin {
                     }
                 }
 
-                JonoUtils.sendBotEmbed(JonoUtils.getChannel().id, embed);
+                JonoUtils.sendBotEmbed(JonoUtils.getCurrentChannelID(), embed);
         });
 
         // purge
@@ -460,36 +427,36 @@ class JonoPlugin {
                     await JonoUtils.sleep(400);
                 }
 
-                JonoUtils.sendBotMessage(JonoUtils.getChannel().id, `Purged ${num_purged} messages`);
+                JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), `Purged ${num_purged} messages`);
         });
 
         // eval
         this.addCommand("eval", "Evaluates javascript codenz", ["code"], [])
             .onCommand(args => {
-                JonoUtils.sendMessage(JonoUtils.getChannel().id, String(eval(args.code)));
+                JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), String(eval(args.code)));
         });
 
         // repeat
         this.addCommand("repeat", "Repeats text", ["amount", "text"], [])
             .onCommand(args => {
-                JonoUtils.sendMessage(JonoUtils.getChannel().id, args.text.repeat(args.amount));
+                JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), args.text.repeat(args.amount));
         });
 
         // clear
         this.addCommand("clear", "Clears chat", [], [])
             .onCommand(args => {
-                JonoUtils.sendMessage(JonoUtils.getChannel().id, "`." + "\n".repeat(1990) + "cleared`");
+                JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), "`." + "\n".repeat(1990) + "cleared`");
         });
 
         // imdb
         this.addCommand("imdb", "Search up a movie/show on imdb", ["title"], [])
             .onCommand(async args => {
                 if (!JonoUtils.settings.api_keys.omdbapi) {
-                    JonoUtils.sendBotMessage(JonoUtils.getChannel().id, `\`omdbapi.com\` API key not provided\n`);
+                    JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), `\`omdbapi.com\` API key not provided\n`);
                     return;
                 }
 
-                JonoUtils.sendMessage(JonoUtils.getChannel().id, `Searching IMDB for \`${args.title}\``);
+                JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), `Searching IMDB for \`${args.title}\``);
 
                 const data = await JonoUtils.request_promise({
                     method: "GET",
@@ -503,7 +470,7 @@ class JonoPlugin {
                 });
 
                 if (!data.Search && data.Error) {
-                    JonoUtils.sendMessage(JonoUtils.getChannel().id, data.Error);
+                    JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), data.Error);
                     return;
                 }
 
@@ -516,14 +483,14 @@ class JonoPlugin {
                     content += "\n";
                 });
 
-                JonoUtils.sendMessage(JonoUtils.getChannel().id, content);
+                JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), content);
         });
 
         // ipdata
         this.addCommand("ipdata", "Shows information about a specific ip", ["ip"], [])
             .onCommand(async args => {
                 if (!JonoUtils.settings.api_keys.ipdata) {
-                    JonoUtils.sendBotMessage(JonoUtils.getChannel().id, `\`ipdata.co\` API key not provided\n`);
+                    JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), `\`ipdata.co\` API key not provided\n`);
                     return;
                 }
 
@@ -536,12 +503,12 @@ class JonoPlugin {
                 });
                 
                 if (!response) {
-                    JonoUtils.sendBotMessage(JonoUtils.getChannel().id, "Error requesting data");
+                    JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), "Error requesting data");
                     return;
                 }
 
                 if (response.message) {
-                    JonoUtils.sendBotMessage(JonoUtils.getChannel().id, response.message);
+                    JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), response.message);
                     return;
                 }
                 
@@ -615,18 +582,39 @@ class JonoPlugin {
                     });
                 }
 
-                JonoUtils.sendBotEmbed(JonoUtils.getChannel().id, embed);
+                JonoUtils.sendBotEmbed(JonoUtils.getCurrentChannelID(), embed);
         });
 
         // echo
         this.addCommand("echo", "Echoes stuff", ["text"], [])
             .onCommand(args => {
-                JonoUtils.sendBotMessage(JonoUtils.getChannel().id, args.text);
+                JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), args.text);
         });
 
-        this.addCommand("test", "Testing purposes", [], [])
+        // seibmoz
+        this.addCommand("seibmoz", "seibmoz mode", [], ["emote"])
+            .onCommand(function (args) {
+                this.emote = args.emote || ":ok_hand::skin-tone-5:";
+                this.enabled = !this.enabled;
+
+                if (this.enabled) {
+                    JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), "Seibmoz mode enabled.");
+                } else {
+                    JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), "Seibmoz mode disabled.");
+                }
+        })
+            .onInput(function (input) {
+                if (!this.enabled) {
+                    return;
+                }
+
+                JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), `${this.emote} ${input} ${this.emote}`);
+                return true;
+        });
+
+        this.addCommand("test", "Testing purposes", ["arg1", "arg2"], ["arg3"])
             .onCommand(args => {
-                console.log(JonoUtils.getNumToasts());
+
         });
     }
 }
@@ -653,6 +641,7 @@ const JonoUtils = {
         JonoUtils.CheckboxSelector = BdApi.findModuleByProps("checkboxInner");
         JonoUtils.MarkupSelector = BdApi.findModuleByProps("markup");
         JonoUtils.MessagesSelector = BdApi.findModuleByProps("username");
+        JonoUtils.AppSelector = BdApi.findModuleByProps("app");
 
         JonoUtils.request = require("request");
         JonoUtils.request_promise = options => {
@@ -710,7 +699,6 @@ const JonoUtils = {
         JonoUtils.contextListeners = [];
     },
 
-    // discordapi
     getUser: userid => {
         if (userid) {
             return JonoUtils.UserStore.getUser(userid);
@@ -725,6 +713,15 @@ const JonoUtils = {
     getGuild: guildid => {
         guildid = guildid || JonoUtils.SelectedGuildStore.getGuildId();
         return JonoUtils.GuildStore.getGuild(guildid);
+    },
+    getCurrentUserID: () => {
+        return JonoUtils.UserStore.getCurrentUser().id; // probably should change this but whatever
+    },
+    getCurrentChannelID: () => {
+        return JonoUtils.SelectedChannelStore.getChannelId();
+    },
+    getCurrentGuildID: () => {
+        return JonoUtils.SelectedGuildStore.getGuildId();
     },
     getMessages: async options => { // options: channelid, beforeid, amount, userid
         if (!options) {
@@ -925,6 +922,13 @@ const JonoUtils = {
 
                 this.main_div.appendChild(bda_controls);
             }
+            addHorizontalRule() {
+                const hr = document.createElement("hr");
+
+                hr.className = "dividerEnabled-2TTlcf divider-32i8lo da-dividerEnabled da-divider";
+
+                this.main_div.appendChild(hr);
+            }
         };
     },
 
@@ -963,7 +967,7 @@ const JonoUtils = {
             toastsContainer.style.setProperty("left", chatForm ? chatForm.getBoundingClientRect().left + "px" : "0px");
             toastsContainer.style.setProperty("width", chatForm ? chatForm.offsetWidth + "px" : "100%");
             toastsContainer.style.setProperty("bottom", (document.querySelector(".chat-3bRxxu form") ? document.querySelector(".chat-3bRxxu form").offsetHeight : 80) + "px");
-            document.querySelector(".app, .app-2rEoOp").appendChild(toastsContainer);
+            JonoUtils.getAppElement().appendChild(toastsContainer);
         }
 
         // make the toast
@@ -1089,6 +1093,9 @@ const JonoUtils = {
         return outer_div;
     },
 
+    getAppElement: () => {
+        return document.querySelector(JonoUtils.AppSelector.app.split(" ").map(x => "." + x).join(", "));
+    },
     getReactInstance: element => {
         if (!(element instanceof jQuery) && !(element instanceof Element))
             return undefined;
@@ -1149,6 +1156,20 @@ const JonoUtils = {
             content = content.replace(x, seperator);
         });
 
+        // server mentions <@!ID>
+        (content.match(/&lt;@!\d+?&gt;/g) || []).forEach(x => {        
+            const id = x.slice(6, -4);
+            const user = JonoUtils.getUser(id);
+
+            let username = x;
+            if (user) {
+                username = user.username;
+            }
+
+            const seperator = `<span class="mention wrapperHover-1GktnT wrapper-3WhCwL da-wrapperHover da-wrapper">@${username}</span>`;
+            content = content.replace(x, seperator);
+        });
+
         // role mentions
         if (message.guild_id) {
             const guild = JonoUtils.getGuild(message.guild_id);
@@ -1197,5 +1218,10 @@ const JonoUtils = {
     },
     sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
+    },
+    encodeHTMLEntities(text) {
+        return text.replace(/[\u00A0-\u9999<>\&]/gim, i => {
+            return "&#" + i.charCodeAt(0) + ";";
+        });
     }
 }
