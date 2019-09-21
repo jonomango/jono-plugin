@@ -52,7 +52,7 @@ class JonoPlugin {
     }
 
     start() {
-        JonoUtils.setup();
+        JonoUtils.setup(this);
 
         JonoUtils.hookDispatch(this.onDispatch.bind(this));
         JonoUtils.hookContextMenu(this.onContextMenu.bind(this));
@@ -168,7 +168,7 @@ class JonoPlugin {
             icon_url: JonoUtils.getAvatarURL(message.author),
             duration: JonoUtils.settings.custom_notifications.duration,
             callback: () => {
-                JonoUtils.ChannelActions.selectChannel(message.guild_id || null, message.channel_id);
+                JonoUtils.switchToChannel(message.guild_id, message.channel_id);
             }
         });
     }
@@ -288,13 +288,43 @@ class JonoPlugin {
         this.onCommand(cmd, input);
     }
     onCommand(command, input) {
-        // TODO: account for ""
         const parseArgs = (cmd, str) => {
             if (!str) {
                 return {};
             }
 
-            let args = str.split(" ");
+            let args = [];
+            let cached_str = "";
+            let is_in_quotes = false;
+            for (let i = 0, len = str.length; i < len; ++i) {
+                // escaped "
+                if (i + 1 < len && str[i] == "\\" && str[i + 1] == "\"") {
+                    i += 1;
+                    cached_str += "\"";
+                    continue;
+                }
+
+                // shizzle between "" counts as one arg
+                if (str[i] == "\"") {
+                    is_in_quotes = !is_in_quotes;
+                    continue;
+                }
+
+                if (!is_in_quotes && str[i] == " ") { // clear the string and add it to the args array
+                    if (cached_str) {
+                        args.push(cached_str);
+                        cached_str = "";
+                    }
+                } else { // add the char to the cached string
+                    cached_str += str[i];
+                }
+            }
+
+            // any remaining shizzle
+            if (cached_str) {
+                args.push(cached_str);
+            }
+
             let obj = {};
 
             const cmd_args = cmd.required_args.concat(cmd.optional_args);
@@ -730,16 +760,18 @@ class JonoPlugin {
                 app_element.appendChild(drawing_container);
         });
 
-        this.addCommand("test", "Testing purposes", [], [])
+        this.addCommand("test", "Testing purposes", ["arg1", "arg2"], ["optional1"])
             .onCommand(args => {
-                console.log(JonoUtils.MessagesSelector);
+                console.log(args);
         });
     }
 }
 
 // wrapper around some BdApi functions (heavily inspired by Zere's Library)
 const JonoUtils = {
-    setup: () => {
+    setup: plugin => {
+        JonoUtils.main_plugin = plugin;
+
         JonoUtils.MessageActions = BdApi.findModuleByProps("jumpToMessage", "_sendMessage");
         JonoUtils.UserInfoStore = BdApi.findModuleByProps("getToken");
         JonoUtils.UserStore = BdApi.findModuleByProps("getCurrentUser");
@@ -1212,6 +1244,10 @@ const JonoUtils = {
         return outer_div;
     },
 
+    switchToChannel: (guildid, channelid) => {
+        JonoUtils.ChannelActions.selectChannel(guildid || null, channelid);
+        JonoUtils.main_plugin.onSwitch();
+    },
     getAppElement: () => {
         return document.querySelector(JonoUtils.AppSelector.app.split(" ").map(x => "." + x).join(", "));
     },
