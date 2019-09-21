@@ -592,10 +592,16 @@ class JonoPlugin {
         });
 
         // seibmoz
-        this.addCommand("seibmoz", "seibmoz mode", [], ["emote"])
+        this.addCommand("seibmoz", "Seibmoz mode", [], ["text"])
             .onCommand(function (args) {
-                this.emote = args.emote || ":ok_hand::skin-tone-5:";
-                this.enabled = !this.enabled;
+                this.text = args.text || ":ok_hand::skin-tone-5:";
+
+                // always enable if they provide an arg
+                if (args.text) {
+                    this.enabled = true;
+                } else {
+                    this.enabled = !this.enabled;
+                }
 
                 if (this.enabled) {
                     JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), "Seibmoz mode enabled.");
@@ -608,13 +614,125 @@ class JonoPlugin {
                     return;
                 }
 
-                JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), `${this.emote} ${input} ${this.emote}`);
+                JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), `${this.text} ${input} ${this.text}`);
                 return true;
         });
 
-        this.addCommand("test", "Testing purposes", ["arg1", "arg2"], ["arg3"])
+        // draw
+        this.addCommand("draw", "Create ascii art to send in the current channel", [], ["width", "height"])
             .onCommand(args => {
+                const width = parseInt(args.width) || 60,
+                    height = parseInt(args.height) || 30;
 
+                // dimensions too big
+                if (width * height > 1900) {
+                    JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), "width * height > 1900");
+                    return;
+                }
+
+                const app_element = JonoUtils.getAppElement();
+                let clicked_array = [...Array(width)].map(() => [...Array(height)].map(() => false));
+
+                const drawing_container = document.createElement("div");
+                drawing_container.className = "jono-drawing-container";
+
+                drawing_container.style["background-color"] = "rgb(40, 40, 40)";
+                drawing_container.style["position"] = "fixed";
+                drawing_container.style["z-index"] = "999999";
+                drawing_container.style["left"] = "200px";
+                drawing_container.style["bottom"] = "200px";
+                drawing_container.style["border-radius"] = "8px";
+
+                /* table */
+                const table = document.createElement("table");
+                table.style["border-collapse"] = "collapse";
+                table.style["background-color"] = "rgb(60, 60, 60)";
+                table.style["margin"] = "10px";
+
+                // each td is a square
+                for (let y = 0; y < height; ++y) {
+                    const tr = document.createElement("tr");
+                    table.appendChild(tr);
+
+                    for (let x = 0; x < width; ++x) {
+                        const td = document.createElement("td");
+                        tr.appendChild(td);
+
+                        td.className = `${x}_${y}`;
+                        td.style["width"] = "10px";
+                        td.style["height"] = "10px";
+                        td.style["border"] = "1px solid black";
+
+                        td.onmousedown = td.onmouseenter = () => {
+                            const split_class = event.target.className.split("_");
+                            const x = parseInt(split_class[0]),
+                                y = parseInt(split_class[1]);
+                            
+                            if (event.which == 1) {
+                                event.target.style["background-color"] = "black";
+                                clicked_array[x][y] = true;
+                            } else if (event.which == 3) {
+                                event.target.style["background-color"] = null;
+                                clicked_array[x][y] = false;
+                            }
+                        }
+                    }
+                }
+
+                drawing_container.appendChild(table);
+                /* table */
+
+                /* submit button */
+                const submit_button = document.createElement("div");
+
+                submit_button.innerText = "Submit";
+                submit_button.style["margin"] = "10px";
+                submit_button.style["padding"] = "2px";
+                submit_button.style["color"] = "lightgrey";
+                submit_button.style["text-align"] = "center";
+                submit_button.style["border"] = "1px solid black";
+                submit_button.style["background-color"] = "rgb(60, 60, 60)";
+
+                submit_button.onclick = () => {
+                    drawing_container.remove();
+
+                    const channelid = JonoUtils.getCurrentChannelID();
+                    if (!channelid) {
+                        return;
+                    }
+
+                    // create the message
+                    let content = "";
+                    for (let y = 0; y < height; ++y) {
+                        let line = "";
+                        for (let x = 0; x < width; ++x) {
+                            line += clicked_array[x][y] ? "." : " ";
+                        }
+
+                        if (line.trim()) {
+                            if (content) {
+                                content += line + "\n"
+                            } else {
+                                content += "frog\n" + line + "\n";
+                            }
+                        }
+                    }
+
+                    // send the message (if they drew something)
+                    if (content) {
+                        JonoUtils.sendMessage(channelid, `\`\`\`${content}\`\`\``);
+                    }
+                };
+
+                drawing_container.appendChild(submit_button);
+                /* submit button */
+
+                app_element.appendChild(drawing_container);
+        });
+
+        this.addCommand("test", "Testing purposes", [], [])
+            .onCommand(args => {
+                console.log(JonoUtils.MessagesSelector);
         });
     }
 }
@@ -640,7 +758,7 @@ const JonoUtils = {
         JonoUtils.ContextMenuSelector = BdApi.findModuleByProps("contextMenu");
         JonoUtils.CheckboxSelector = BdApi.findModuleByProps("checkboxInner");
         JonoUtils.MarkupSelector = BdApi.findModuleByProps("markup");
-        JonoUtils.MessagesSelector = BdApi.findModuleByProps("username");
+        JonoUtils.MessagesSelector = BdApi.findModuleByProps("username", "divider");
         JonoUtils.AppSelector = BdApi.findModuleByProps("app");
 
         JonoUtils.request = require("request");
@@ -663,8 +781,10 @@ const JonoUtils = {
         JonoUtils.MAX_TOASTS_QUEUE = 10;
     },
     release: () => {
-        JonoUtils.removeDispatchHooks();
-        JonoUtils.removeContextHooks();
+        JonoUtils._removeDispatchHooks();
+        JonoUtils._removeContextHooks();
+
+        document.querySelectorAll(".jono-drawing-container").forEach(x => x.remove());
 
         clearInterval(JonoUtils.heartbeat_interval);
     },
@@ -675,7 +795,7 @@ const JonoUtils = {
         JonoUtils.unpatchFuncs = JonoUtils.unpatchFuncs || [];
         JonoUtils.unpatchFuncs.push(unpatchFunc)
     },
-    removeDispatchHooks: () => {
+    _removeDispatchHooks: () => {
         if (!JonoUtils.unpatchFuncs) {
             return;
         }
@@ -690,7 +810,7 @@ const JonoUtils = {
         JonoUtils.contextListeners = JonoUtils.contextListeners || [];
         JonoUtils.contextListeners.push(func);
     },
-    removeContextHooks: () => {
+    _removeContextHooks: () => {
         if (!JonoUtils.contextListeners) {
             return;
         }
@@ -924,9 +1044,7 @@ const JonoUtils = {
             }
             addHorizontalRule() {
                 const hr = document.createElement("hr");
-
-                hr.className = "dividerEnabled-2TTlcf divider-32i8lo da-dividerEnabled da-divider";
-
+                hr.className = JonoUtils.MessagesSelector.dividerEnabled;
                 this.main_div.appendChild(hr);
             }
         };
@@ -987,6 +1105,7 @@ const JonoUtils = {
         // this removes the toast
         const removeToast = () => {
             toast_elem.classList.add("closing");
+            toast_elem.onclick = null;
 
             // wait 300ms for the closing animation (i think) before actually removing the toast
             setTimeout(() => {
@@ -1011,7 +1130,7 @@ const JonoUtils = {
                 callback();
             }
         }
-
+ 
         // add the toast
         document.querySelector(".bd-toasts").appendChild(toast_elem);
     },
