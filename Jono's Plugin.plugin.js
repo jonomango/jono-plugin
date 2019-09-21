@@ -22,11 +22,21 @@ class JonoPlugin {
                 JonoUtils.settings.command_prefix = value;
                 JonoUtils.saveSettings();
             });
-            
+
             this.settings_panel.addHorizontalRule();
 
             this.settings_panel.addCheckbox("Custom Notifications", JonoUtils.settings.custom_notifications.enabled, value => {
                 JonoUtils.settings.custom_notifications.enabled = value;
+                JonoUtils.saveSettings();
+            });
+
+            this.settings_panel.addCheckbox("Direct Messages Only", JonoUtils.settings.custom_notifications.dms_only, value => {
+                JonoUtils.settings.custom_notifications.dms_only = value;
+                JonoUtils.saveSettings();
+            });
+
+            this.settings_panel.addCheckbox("Status Updates", JonoUtils.settings.custom_notifications.status_updates, value => {
+                JonoUtils.settings.custom_notifications.status_updates = value;
                 JonoUtils.saveSettings();
             });
 
@@ -46,6 +56,11 @@ class JonoPlugin {
                 JonoUtils.settings.api_keys.ipdata = value;
                 JonoUtils.saveSettings();
             }, "password");
+
+            this.settings_panel.addInput("API Key: steamcommunity.com/dev/", "API Key", JonoUtils.settings.api_keys.steam, value => {
+                JonoUtils.settings.api_keys.steam = value;
+                JonoUtils.saveSettings();
+            }, "password");
         }
 
         return this.settings_panel.getMainElement();
@@ -58,13 +73,16 @@ class JonoPlugin {
             command_prefix: "~",
             custom_notifications: {
                 enabled: true,
+                dms_only: false,
+                status_updates: true,
                 duration: 6000,
                 muted_guilds: [],
                 muted_channels: []
             },
             api_keys: {
                 omdbapi: "",
-                ipdata: ""
+                ipdata: "",
+                steam: ""
             }
         });
 
@@ -114,16 +132,21 @@ class JonoPlugin {
             return;
         }
 
-        // if not mentioned, ignore muted channels
-        if (message.mentions.filter(x => x.id == JonoUtils.getUser().id).length <= 0) {
-            // guild is muted
-            if (JonoUtils.settings.custom_notifications.muted_guilds.includes(message.guild_id)) {
-                return;
-            }
+        // only accept direct messages
+        if (JonoUtils.settings.custom_notifications.dms_only && channel.type != 1) {
+            return;
+        } else {
+            // if not mentioned, ignore muted channels
+            if (message.mentions.filter(x => x.id == JonoUtils.getUser().id).length <= 0) {
+                // guild is muted
+                if (JonoUtils.settings.custom_notifications.muted_guilds.includes(message.guild_id)) {
+                    return;
+                }
 
-            // channel is muted
-            if (JonoUtils.settings.custom_notifications.muted_channels.includes(message.channel_id)) {
-                return;
+                // channel is muted
+                if (JonoUtils.settings.custom_notifications.muted_channels.includes(message.channel_id)) {
+                    return;
+                }
             }
         }
 
@@ -157,9 +180,7 @@ class JonoPlugin {
         }
 
         // **username** #channelname, guildname
-        let title = `<span style="position: relative; bottom: 4px">`;
-        title += `<b>${JonoUtils.encodeHTMLEntities(message.author.username)}</b> <span style="color:lightgrey;">${msg_location}</span>`;
-        title += `</span>`;
+        let title = `<b>${JonoUtils.encodeHTMLEntities(message.author.username)}</b> <span style="color:lightgrey;">${msg_location}</span>`;
 
         JonoUtils.showToast(title, JonoUtils.messageToHTML(message), {
             icon_url: JonoUtils.getAvatarURL(message.author),
@@ -219,6 +240,34 @@ class JonoPlugin {
             react_instance.return.stateNode.props.onHeightUpdate();
         }
     }
+    onHeartbeat() {
+        if (!JonoUtils.settings.custom_notifications.status_updates) {
+            this.previous_friend_statuses = {}; // so that it fetches againe on enable
+            return;
+        }
+
+        this.previous_friend_statuses = this.previous_friend_statuses || {};
+        const friend_ids = JonoUtils.getFriendIDs();
+
+        // loop through each friend
+        for (const i in friend_ids) {
+            const userid = friend_ids[i];
+            const is_online = JonoUtils.isUserOnline(userid);
+
+            if (!(userid in this.previous_friend_statuses)) { // if they its the first run or they added the friend
+                this.previous_friend_statuses[userid] = is_online;
+            } else if (this.previous_friend_statuses[userid] != is_online) { // status changed
+                this.previous_friend_statuses[userid] = is_online;
+
+                const user = JonoUtils.getUser(userid);
+                const color = is_online ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)",
+                    text = is_online ? "online" : "offline";
+
+                const title = `${user.username} is now <b style="color: ${color}">${text}</b>`;
+                JonoUtils._showToast(title, "", { icon_url: JonoUtils.getAvatarURL(user) });
+            }
+        }
+    }
     onSwitch() {
         // attach keydown listener
         const textarea = JonoUtils.getTextArea();
@@ -226,6 +275,7 @@ class JonoPlugin {
             textarea.addEventListener("keydown", this.keydownEventListener = this.onKeyDown.bind(this));
         }
     }
+
     onKeyDown(e) {
         const cancelInput = () => {
             // dont send the original text into the channel
@@ -757,9 +807,9 @@ class JonoPlugin {
                 app_element.appendChild(drawing_container);
         });
 
-        this.addCommand("test", "Testing purposes", ["arg1", "arg2"], ["optional1"])
+        this.addCommand("test", "Testing purposes", [], [])
             .onCommand(args => {
-                console.log(args);
+                console.log(JonoUtils.array_difference(["frog1", "frog2", "cheese"], ["frog1", "nigga", "frog2"]));
         });
     }
 }
@@ -767,11 +817,11 @@ class JonoPlugin {
 // wrapper around some BdApi functions (heavily inspired by Zere's Library)
 const JonoUtils = {
     setup: plugin => {
+        JonoUtils.main_plugin = plugin;
+
         // constants
         JonoUtils.MAX_TOASTS = 5;
         JonoUtils.MAX_TOASTS_QUEUE = 10;
-
-        JonoUtils.main_plugin = plugin;
 
         // discord modules
         JonoUtils.MessageActions = BdApi.findModuleByProps("jumpToMessage", "_sendMessage");
@@ -788,6 +838,8 @@ const JonoUtils = {
         JonoUtils.SelectedGuildStore = BdApi.findModuleByProps("getLastSelectedGuildId");
         JonoUtils.ChannelGuildSettings = BdApi.findModuleByProps("isGuildOrCategoryOrChannelMuted");
         JonoUtils.ChannelActions = BdApi.findModuleByProps("selectChannel");
+        JonoUtils.UserStatusStore = BdApi.findModuleByProps("getStatus", "getState");
+        JonoUtils.RelationshipStore = BdApi.findModuleByProps("isBlocked", "getFriendIDs");
 
         // discord selectors
         JonoUtils.ContextMenuSelector = BdApi.findModuleByProps("contextMenu");
@@ -809,11 +861,6 @@ const JonoUtils = {
             });
         };
 
-        // send any queued toasts, if they exist
-        JonoUtils.heartbeat_interval = setInterval(() => {
-            JonoUtils._flushToasts();
-        }, 500);
-
         // dispatch custom callback
         JonoUtils._hookDispatch(data => {
             if (JonoUtils.main_plugin.onDispatch) {
@@ -827,6 +874,15 @@ const JonoUtils = {
                 JonoUtils.main_plugin.onContextMenu();
             }
         });
+
+        // heartbeat function thats called for flushing toasts and stuffs
+        JonoUtils.heartbeat_interval = setInterval(() => {
+            JonoUtils._flushToasts();
+           
+            if (JonoUtils.main_plugin.onHeartbeat) {
+                JonoUtils.main_plugin.onHeartbeat();
+            }
+        }, 500);
     },
     release: () => {
         JonoUtils._removeDispatchHooks();
@@ -952,6 +1008,13 @@ const JonoUtils = {
     },
     getAvatarURL: author => {
         return JonoUtils.AvatarDefaults.getUserAvatarURL(author);
+    },
+    getFriendIDs: () => {
+        return JonoUtils.RelationshipStore.getFriendIDs();
+    },
+    getStatus: userid => {
+        userid = userid || JonoUtils.getCurrentUserID();
+        return JonoUtils.UserStatusStore.getStatus(userid);
     },
 
     sendMessage: (channelid, content) => {
@@ -1089,6 +1152,7 @@ const JonoUtils = {
                 bda_controls.appendChild(text_div);
 
                 this.main_div.appendChild(bda_controls);
+                this.main_div.appendChild(document.createElement("br"));
             }
             addHorizontalRule() {
                 const hr = document.createElement("hr");
@@ -1118,7 +1182,7 @@ const JonoUtils = {
 
         JonoUtils._showToast(title, content, options);
     },
-    _showToast: (title, content, options) => {
+    _showToast: (title, content, options = {}) => {
         if (!bdConfig.deferLoaded)
             return;
 
@@ -1145,11 +1209,11 @@ const JonoUtils = {
 
         // if they have an icon
         if (icon_url) {
-            image_html = `<img src="${icon_url}" width="20" height="20" style="border-radius: 10px; margin-right:5px" />`;
+            image_html = `<img src="${icon_url}" width="20" height="20" style="border-radius: 10px; margin-right:5px; vertical-align: middle" />`;
         }
 
-        toast_elem.innerHTML += `${image_html}${title}<br>${content}`;
-
+        toast_elem.innerHTML = `${image_html}<span style="vertical-align: middle">${title}</span><br>${content}`;
+        
         // this removes the toast
         const removeToast = () => {
             toast_elem.classList.add("closing");
@@ -1260,6 +1324,12 @@ const JonoUtils = {
         return outer_div;
     },
 
+    isUserOnline: userid => {
+        return JonoUtils.getStatus(userid) != "offline";
+    },
+    isUserFriend: userid => {
+        return JonoUtils.RelationshipStore.isFriend(userid);
+    },
     switchToChannel: (guildid, channelid) => {
         JonoUtils.ChannelActions.selectChannel(guildid || null, channelid);
         JonoUtils.main_plugin.onSwitch();
