@@ -20,31 +20,31 @@ class JonoPlugin {
 
             this.settings_panel.addInput("Command Prefix", "Command Prefix", JonoUtils.settings.command_prefix, value => {
                 JonoUtils.settings.command_prefix = value;
-                JonoUtils.saveSettings(this.getName());
+                JonoUtils.saveSettings();
             });
             
             this.settings_panel.addHorizontalRule();
 
             this.settings_panel.addCheckbox("Custom Notifications", JonoUtils.settings.custom_notifications.enabled, value => {
                 JonoUtils.settings.custom_notifications.enabled = value;
-                JonoUtils.saveSettings(this.getName());
+                JonoUtils.saveSettings();
             });
 
             this.settings_panel.addInput("Notification Duration", "Duration", JonoUtils.settings.custom_notifications.duration, value => {
                 JonoUtils.settings.custom_notifications.duration = value;
-                JonoUtils.saveSettings(this.getName());
+                JonoUtils.saveSettings();
             }, "number");
 
             this.settings_panel.addHorizontalRule();
 
             this.settings_panel.addInput("API Key: omdbapi.com", "API Key", JonoUtils.settings.api_keys.omdbapi, value => {
                 JonoUtils.settings.api_keys.omdbapi = value;
-                JonoUtils.saveSettings(this.getName());
+                JonoUtils.saveSettings();
             }, "password");
 
             this.settings_panel.addInput("API Key: ipdata.co", "API Key", JonoUtils.settings.api_keys.ipdata, value => {
                 JonoUtils.settings.api_keys.ipdata = value;
-                JonoUtils.saveSettings(this.getName());
+                JonoUtils.saveSettings();
             }, "password");
         }
 
@@ -54,10 +54,7 @@ class JonoPlugin {
     start() {
         JonoUtils.setup(this);
 
-        JonoUtils.hookDispatch(this.onDispatch.bind(this));
-        JonoUtils.hookContextMenu(this.onContextMenu.bind(this));
-
-        JonoUtils.loadSettings(this.getName(), {
+        JonoUtils.loadSettings({
             command_prefix: "~",
             custom_notifications: {
                 enabled: true,
@@ -75,7 +72,7 @@ class JonoPlugin {
         this.onSwitch();
     }
     stop() {
-        JonoUtils.saveSettings(this.getName());
+        JonoUtils.saveSettings();
 
         // remove keydown listener
         const textarea = JonoUtils.getTextArea();
@@ -204,7 +201,7 @@ class JonoPlugin {
                     JonoUtils.settings.custom_notifications.muted_channels.splice(JonoUtils.settings.custom_notifications.muted_channels.indexOf(channel.id), 1);
                 }
 
-                JonoUtils.saveSettings(this.getName());
+                JonoUtils.saveSettings();
             }));
         } else if (guild) {
             catagory.appendChild(JonoUtils.createContextMenuCheckbox("Mute (Jono's Plugin)", JonoUtils.settings.custom_notifications.muted_guilds.includes(guild.id), value => {
@@ -214,7 +211,7 @@ class JonoPlugin {
                     JonoUtils.settings.custom_notifications.muted_guilds.splice(JonoUtils.settings.custom_notifications.muted_guilds.indexOf(guild.id), 1);
                 }
 
-                JonoUtils.saveSettings(this.getName());
+                JonoUtils.saveSettings();
             }));
         }
 
@@ -770,8 +767,13 @@ class JonoPlugin {
 // wrapper around some BdApi functions (heavily inspired by Zere's Library)
 const JonoUtils = {
     setup: plugin => {
+        // constants
+        JonoUtils.MAX_TOASTS = 5;
+        JonoUtils.MAX_TOASTS_QUEUE = 10;
+
         JonoUtils.main_plugin = plugin;
 
+        // discord modules
         JonoUtils.MessageActions = BdApi.findModuleByProps("jumpToMessage", "_sendMessage");
         JonoUtils.UserInfoStore = BdApi.findModuleByProps("getToken");
         JonoUtils.UserStore = BdApi.findModuleByProps("getCurrentUser");
@@ -787,12 +789,14 @@ const JonoUtils = {
         JonoUtils.ChannelGuildSettings = BdApi.findModuleByProps("isGuildOrCategoryOrChannelMuted");
         JonoUtils.ChannelActions = BdApi.findModuleByProps("selectChannel");
 
+        // discord selectors
         JonoUtils.ContextMenuSelector = BdApi.findModuleByProps("contextMenu");
         JonoUtils.CheckboxSelector = BdApi.findModuleByProps("checkboxInner");
         JonoUtils.MarkupSelector = BdApi.findModuleByProps("markup");
         JonoUtils.MessagesSelector = BdApi.findModuleByProps("username", "divider");
         JonoUtils.AppSelector = BdApi.findModuleByProps("app");
 
+        // request wrapper that uses promises
         JonoUtils.request = require("request");
         JonoUtils.request_promise = options => {
             return new Promise((resolve, reject) => {
@@ -805,12 +809,24 @@ const JonoUtils = {
             });
         };
 
+        // send any queued toasts, if they exist
         JonoUtils.heartbeat_interval = setInterval(() => {
             JonoUtils._flushToasts();
         }, 500);
 
-        JonoUtils.MAX_TOASTS = 5;
-        JonoUtils.MAX_TOASTS_QUEUE = 10;
+        // dispatch custom callback
+        JonoUtils._hookDispatch(data => {
+            if (JonoUtils.main_plugin.onDispatch) {
+                JonoUtils.main_plugin.onDispatch(data);
+            }
+        });
+
+        // context menu custom callback
+        JonoUtils._hookContextMenu(() => {
+            if (JonoUtils.main_plugin.onContextMenu) {
+                JonoUtils.main_plugin.onContextMenu();
+            }
+        });
     },
     release: () => {
         JonoUtils._removeDispatchHooks();
@@ -822,7 +838,7 @@ const JonoUtils = {
     },
 
     // dispatch callbacks
-    hookDispatch: func => {
+    _hookDispatch: func => {
         const unpatchFunc = BdApi.monkeyPatch(BdApi.findModuleByProps("dispatch"), 'dispatch', { after: func });
         JonoUtils.unpatchFuncs = JonoUtils.unpatchFuncs || [];
         JonoUtils.unpatchFuncs.push(unpatchFunc)
@@ -837,7 +853,7 @@ const JonoUtils = {
     },
 
     // context menu callbacks
-    hookContextMenu: func => {
+    _hookContextMenu: func => {
         document.addEventListener("contextmenu", func);
         JonoUtils.contextListeners = JonoUtils.contextListeners || [];
         JonoUtils.contextListeners.push(func);
@@ -985,15 +1001,15 @@ const JonoUtils = {
     },
 
     // settings
-    saveSettings: name => {
+    saveSettings: () => {
         if (!JonoUtils.settings) {
             JonoUtils.settings = {};
         }
 
-        BdApi.saveData(name, "settings", JonoUtils.settings);
+        BdApi.saveData(JonoUtils.main_plugin.getName(), "settings", JonoUtils.settings);
     },
-    loadSettings: (name, default_settings = {}) => {
-        JonoUtils.settings = BdApi.loadData(name, "settings") || default_settings;
+    loadSettings: (default_settings = {}) => {
+        JonoUtils.settings = BdApi.loadData(JonoUtils.main_plugin.getName(), "settings") || default_settings;
 
         const recursive_func = (settings, def) => {
             for (const key in def) {
