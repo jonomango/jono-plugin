@@ -540,9 +540,7 @@ class JonoPlugin {
                     return;
                 }
 
-                JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), `Searching IMDB for \`${args.title}\``);
-
-                const data = await JonoUtils.request_promise({
+                const response = await JonoUtils.request_promise({
                     method: "GET",
                     uri: "http://www.omdbapi.com",
                     qs: {
@@ -553,21 +551,31 @@ class JonoPlugin {
                     json: true
                 });
 
-                if (!data.Search && data.Error) {
-                    JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), data.Error);
+                if (!response) {
+                    JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), "Failed to get omdbapi.com response");
                     return;
                 }
 
-                let content = "";
-                data.Search.forEach(movie => {
-                    content += "**[+]** ";
-                    content += "***" + movie.Title + "*** _[" + movie.Type + ", " + movie.Year + "]_";
-                    content += "\n";
-                    content += "<https://www.imdb.com/title/" + movie.imdbID + ">";
-                    content += "\n";
+                if (!response.Search && response.Error) {
+                    JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), response.Error);
+                    return;
+                }
+
+                const embed = {
+                    type: "rich",
+                    title: `Showing results for \`${args.title}\``,
+                    fields: []
+                }
+
+                response.Search.forEach(movie => {
+                    embed.fields.push({
+                        inline: false,
+                        name: `**${movie.Title}** (${movie.Type}, ${movie.Year})`,
+                        value: `<https://www.imdb.com/title/${movie.imdbID}>`
+                    });
                 });
 
-                JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), content);
+                JonoUtils.sendBotEmbed(JonoUtils.getCurrentChannelID(), embed);
         });
 
         // ipdata
@@ -587,7 +595,7 @@ class JonoPlugin {
                 });
                 
                 if (!response) {
-                    JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), "Error requesting data");
+                    JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), "Failed to get api.ipdata.co response");
                     return;
                 }
 
@@ -597,8 +605,8 @@ class JonoPlugin {
                 }
                 
                 const embed = {
-                    color: 0x00FF00,
                     type: "rich",
+                    color: 0x00FF00,
                     title: args.ip,
                     fields: []
                 };
@@ -686,7 +694,7 @@ class JonoPlugin {
                     if (response && response.errorMessage) {
                         JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), response.errorMessage);
                     } else {
-                        JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), "Error getting minecraft uuid");
+                        JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), "Failed to get api.mojang.com response");
                     }
 
                     return;
@@ -735,6 +743,12 @@ class JonoPlugin {
                 });
 
                 JonoUtils.sendBotEmbed(JonoUtils.getCurrentChannelID(), embed);
+        });
+
+        // steam
+        this.addCommand("steam", "Shows information about the steam user", ["id"], [])
+            .onCommand(async args => {
+
         });
 
         // echo
