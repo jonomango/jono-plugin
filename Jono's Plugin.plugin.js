@@ -56,11 +56,6 @@ class JonoPlugin {
                 JonoUtils.settings.api_keys.ipdata = value;
                 JonoUtils.saveSettings();
             }, "password");
-
-            this.settings_panel.addInput("API Key: steamcommunity.com/dev/", "API Key", JonoUtils.settings.api_keys.steam, value => {
-                JonoUtils.settings.api_keys.steam = value;
-                JonoUtils.saveSettings();
-            }, "password");
         }
 
         return this.settings_panel.getMainElement();
@@ -81,8 +76,7 @@ class JonoPlugin {
             },
             api_keys: {
                 omdbapi: "",
-                ipdata: "",
-                steam: ""
+                ipdata: ""
             }
         });
 
@@ -748,7 +742,68 @@ class JonoPlugin {
         // steam
         this.addCommand("steam", "Shows information about the steam user", ["id"], [])
             .onCommand(async args => {
+                const response = await JonoUtils.request_promise({
+                    uri: `https://steamid.io/lookup/${args.id}`,
+                });
 
+                if (!response) {
+                    JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), "Failed to get steamid.io response");
+                    return;
+                }
+
+                const html_doc = (new DOMParser).parseFromString(response, 'text/html'),
+                    html_keys = html_doc.getElementsByClassName("key"),
+                    html_values = html_doc.getElementsByClassName("value");
+    
+                const steam_info = {};
+                for (let i = 0; i < html_keys.length; ++i) {
+                    steam_info[html_keys[i].innerText] = html_values[i].innerText.trim();
+                }
+
+                if (Object.keys(steam_info).length <= 0) {
+                    JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), "No steam info found");
+                    return;
+                }
+
+                const embed = {
+                    type: "rich",
+                    author: {
+                        name: steam_info["name"],
+                        url: steam_info["profile"]
+                    },
+                    fields: [{
+                        inline: true,
+                        name: "SteamID",
+                        value: steam_info["steamID"]
+                    }, {
+                        inline: true,
+                        name: "SteamID3",
+                        value: steam_info["steamID3"]
+                    }, {
+                        inline: true,
+                        name: "SteamID64",
+                        value: steam_info["steamID64"]
+                    },{
+                        inline: true,
+                        name: "Status",
+                        value: steam_info["status"]
+                    }, {
+                        inline: true,
+                        name: "Type",
+                        value: steam_info["profile state"]
+                    },  {
+                        inline: true,
+                        name: "Created",
+                        value: steam_info["profile created"]
+                    }, {
+                        inline: false,
+                        name: "Location",
+                        value: steam_info["location"]
+                    }]
+                };
+
+
+                JonoUtils.sendBotEmbed(JonoUtils.getCurrentChannelID(), embed);
         });
 
         // echo
