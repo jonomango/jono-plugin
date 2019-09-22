@@ -150,14 +150,14 @@ class JonoPlugin {
             }
         }
 
-        let msg_location = "";
+        let msg_location = "", channel_name = "";
         if (channel.type == 1) {
             msg_location = "Direct Message";
         } else {
             // #channelname, guildname
-            msg_location = "#";
+            channel_name = "#";
             if (!channel.name) {
-                msg_location += channel.recipients.reduce((total, user) => {
+                channel_name += channel.recipients.reduce((total, user) => {
                     user = JonoUtils.getUser(user);
                     if (!user) {
                         return total;
@@ -168,9 +168,16 @@ class JonoPlugin {
                     return total + ", " + user.username;
                 }, null);
             } else {
-                msg_location += channel.name;
+                channel_name += channel.name;
             }
         }
+
+        // channel icon
+        if (channel.icon) {
+            msg_location += ` <img class="emoji" src="https://cdn.discordapp.com/channel-icons/${channel.id}/${channel.icon}.webp" width="20" height="20" style="border-radius: 10px; margin-right:5px" />`;
+        }
+
+        msg_location += channel_name;
 
         // guild icon
         if (message.guild_id) {
@@ -263,8 +270,8 @@ class JonoPlugin {
                 const color = is_online ? "rgb(0, 200, 0)" : "rgb(200, 0, 0)",
                     text = is_online ? "online" : "offline";
 
-                const title = `${user.username} is now <b style="color: ${color}">${text}</b>`;
-                JonoUtils._showToast(title, "", { icon_url: JonoUtils.getAvatarURL(user) });
+                const title = `<b>${JonoUtils.encodeHTMLEntities(user.username)}</b> is now <b style="color: ${color}">${text}</b>`;
+                JonoUtils._showToast(title, "", { icon_url: JonoUtils.getAvatarURL(user), duration: JonoUtils.settings.custom_notifications.duration });
             }
         }
     }
@@ -658,6 +665,74 @@ class JonoPlugin {
                         value: response.asn.name
                     });
                 }
+
+                JonoUtils.sendBotEmbed(JonoUtils.getCurrentChannelID(), embed);
+        });
+
+        // mc
+        this.addCommand("mc", "Shows information about the minecraft user", ["username"], [])
+            .onCommand(async args => {
+                // get the uuid from the username
+                let response = await JonoUtils.request_promise({
+                    uri: `https://api.mojang.com/users/profiles/minecraft/${args.username}`,
+                    qs: {
+                        at: Date.now()
+                    },
+                    json: true
+                });
+
+                // error
+                if (!response || !response.id) {
+                    if (response && response.errorMessage) {
+                        JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), response.errorMessage);
+                    } else {
+                        JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), "Error getting minecraft uuid");
+                    }
+
+                    return;
+                }
+
+                const uuid = response.id
+
+                response = await JonoUtils.request_promise({
+                    uri: `https://api.mojang.com/user/profiles/${uuid}/names`,
+                    json: true
+                });
+
+                const embed = {
+                    type: "rich",
+                    fields: [],
+                    author: {
+                        name: args.username,
+                        url: `https://namemc.com/profile/${uuid}`,
+                    },
+                    image: {
+                        height: 270,
+                        width: 120,
+                        proxyURL: `https://crafatar.com/renders/body/${uuid}`,
+                        url: `https://crafatar.com/renders/body/${uuid}`
+                    },
+                };
+
+                // uid
+                embed.fields.push({
+                    inline: false,
+                    name: "UUID",
+                    value: uuid
+                });
+
+                // previous names
+                embed.fields.push({
+                    inline: false,
+                    name: "Previous Names",
+                    value: response.reverse().reduce((total, x) => {
+                        if (x.changedToAt) {
+                            return total + x.name + " - **" + (new Date(x.changedToAt)).toUTCString().slice(5, 16) + "**\n";
+                        } else {
+                            return total + x.name + "\n";
+                        }
+                    }, "")
+                });
 
                 JonoUtils.sendBotEmbed(JonoUtils.getCurrentChannelID(), embed);
         });
@@ -1203,7 +1278,7 @@ const JonoUtils = {
         // make the toast
         let toast_elem = document.createElement("div");
         toast_elem.className = "bd-toast " + JonoUtils.MarkupSelector.markup;
-        toast_elem.style = "font-weight:lighter; max-width: 800px; pointer-events: auto;";
+        toast_elem.style = "font-weight:lighter; max-width: 800px; pointer-events: auto";
 
         let image_html = "";
 
