@@ -276,7 +276,6 @@ class JonoPlugin {
             textarea.addEventListener("keydown", this.keydownEventListener = this.onKeyDown.bind(this));
         }
     }
-
     onKeyDown(e) {
         const cancelInput = () => {
             // dont send the original text into the channel
@@ -494,18 +493,15 @@ class JonoPlugin {
         this.addCommand("purge", "Mass deletes your last messages", ["amount"], [])
             .onCommand(async args => {
                 const userid = JonoUtils.getUser().id;
-                const amount = parseInt(args.amount);
+                const amount = Math.min(parseInt(args.amount), 1000);
 
-                let num_purged = 0;
-                let messages = await JonoUtils.getMessages({ userid, amount });
-
+                const messages = await JonoUtils.getMessages({ userid, amount });
                 for (let i = 0; i < messages.length; ++i) {
-                    ++num_purged;
                     JonoUtils.deleteMessage(messages[i].channel_id, messages[i].id);
-                    await JonoUtils.sleep(400);
+                    await JonoUtils.sleep(500);
                 }
 
-                JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), `Purged ${num_purged} messages`);
+                JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), `Purged ${amount} messages`);
         });
 
         // eval
@@ -572,8 +568,8 @@ class JonoPlugin {
                 JonoUtils.sendBotEmbed(JonoUtils.getCurrentChannelID(), embed);
         });
 
-        // ipdata
-        this.addCommand("ipdata", "Shows information about a specific ip", ["ip"], [])
+        // ip
+        this.addCommand("ip", "Shows information about a specific ip", ["ip"], [])
             .onCommand(async args => {
                 if (!JonoUtils.settings.api_keys.ipdata) {
                     JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), `\`ipdata.co\` API key not provided\n`);
@@ -860,7 +856,7 @@ class JonoPlugin {
                 drawing_container.style["background-color"] = "rgb(40, 40, 40)";
                 drawing_container.style["position"] = "fixed";
                 drawing_container.style["z-index"] = "999999";
-                drawing_container.style["left"] = "200px";
+                drawing_container.style["left"] = "400px";
                 drawing_container.style["bottom"] = "200px";
                 drawing_container.style["border-radius"] = "8px";
 
@@ -965,7 +961,6 @@ const JonoUtils = {
 
         // constants
         JonoUtils.MAX_TOASTS = 5;
-        JonoUtils.MAX_TOASTS_QUEUE = 10;
 
         // discord modules
         JonoUtils.MessageActions = BdApi.findModuleByProps("jumpToMessage", "_sendMessage");
@@ -1019,14 +1014,16 @@ const JonoUtils = {
             }
         });
 
-        // heartbeat function thats called for flushing toasts and stuffs
-        JonoUtils.heartbeat_interval = setInterval(() => {
-            JonoUtils._flushToasts();
-           
-            if (JonoUtils.main_plugin.onHeartbeat) {
-                JonoUtils.main_plugin.onHeartbeat();
-            }
-        }, 500);
+        setTimeout(() => {
+            // heartbeat function thats called every 500ms
+            JonoUtils.heartbeat_interval = setInterval(() => {
+                JonoUtils._flushToasts();
+            
+                if (JonoUtils.main_plugin.onHeartbeat) {
+                    JonoUtils.main_plugin.onHeartbeat();
+                }
+            }, 500);
+        }, 2000);
     },
     release: () => {
         JonoUtils._removeDispatchHooks();
@@ -1314,10 +1311,15 @@ const JonoUtils = {
     showToast: (title, content, options = {}) => {
         JonoUtils._flushToasts();
 
-        // if not focused or too many toasts
-        if (!document.hasFocus() || JonoUtils.numToasts() >= JonoUtils.MAX_TOASTS) {
+        // too many
+        if (JonoUtils.numToasts() >= JonoUtils.MAX_TOASTS) {
+            return;
+        }
+
+        // if not focused
+        if (!document.hasFocus()) {
             JonoUtils.queued_toasts = JonoUtils.queued_toasts || [];
-            if (JonoUtils.queued_toasts.length < JonoUtils.MAX_TOASTS_QUEUE) {
+            if (JonoUtils.queued_toasts.length < JonoUtils.MAX_TOASTS) {
                 JonoUtils.queued_toasts.push({ title, content, options });
             }
 
