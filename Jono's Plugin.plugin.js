@@ -836,7 +836,7 @@ class JonoPlugin {
         });
 
         // draw
-        this.addCommand("draw", "Create ascii art to send in the current channel", [], ["width", "height"])
+        this.addCommand("draw", "Create ascii art to send in the current channel", ["caption"], ["width", "height"])
             .onCommand(args => {
                 const width = parseInt(args.width) || 60,
                     height = parseInt(args.height) || 30;
@@ -930,14 +930,14 @@ class JonoPlugin {
                             if (content) {
                                 content += line + "\n"
                             } else {
-                                content += "frog\n" + line + "\n";
+                                content += `${args.caption}\n${line}\n`;
                             }
                         }
                     }
 
                     // send the message (if they drew something)
                     if (content) {
-                        JonoUtils.sendMessage(channelid, `\`\`\`${content}\`\`\``);
+                        JonoUtils.sendMessage(channelid, `\`\`\`\n\n${content}\`\`\``);
                     }
                 };
 

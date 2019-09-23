@@ -61,6 +61,6 @@ A plugin for [BetterDiscord](https://betterdiscord.net/home/). Uses no external 
   Usage: `~seibmoz [?text]`
 #### _draw_
   Draw ascii art and send it into the current channel. `width` defaults to `60` and `height` defaults to `30`.  
-  Usage: `~draw [?width] [?height]`  
+  Usage: `~draw [caption] [?width] [?height]`  
   
   ![Example](https://imgur.com/qSjw1lG.gif)
