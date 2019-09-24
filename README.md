@@ -21,9 +21,6 @@ A plugin for [BetterDiscord](https://betterdiscord.net/home/). Uses no external 
 #### _help_
   Provides information on every command or a specified command.  
   Usage: `~help [?command]`
-#### _purge_
-  Deletes your last messages in a channel. Max messages is 1000.  
-  Usage: `~purge [amount]`
 #### _eval_
   Evaluates javascript code.  
   Usage: `~eval [code]`  
@@ -33,7 +30,7 @@ A plugin for [BetterDiscord](https://betterdiscord.net/home/). Uses no external 
   Repeats text a certain amount of times.  
   Usage: `~repeat [amount] [text]`
 #### _clear_
-  Clears the chat by spamming a bunch of whitespace.  
+  Clears the chat by spamming a bunch of whitespace (client-side only).  
   Usage: `~clear`
 #### _imdb_
   Returns the results of searching up a movie (or series) on IMDB. Must provide an [API key](https://www.omdbapi.com) in settings to work.  

@@ -490,19 +490,19 @@ class JonoPlugin {
         });
 
         // purge
-        this.addCommand("purge", "Mass deletes your last messages", ["amount"], [])
-            .onCommand(async args => {
-                const userid = JonoUtils.getUser().id;
-                const amount = Math.min(parseInt(args.amount), 1000);
+        // this.addCommand("purge", "Mass deletes your last messages", ["amount"], [])
+        //     .onCommand(async args => {
+        //         const userid = JonoUtils.getUser().id;
+        //         const amount = Math.min(parseInt(args.amount), 1000);
 
-                const messages = await JonoUtils.getMessages({ userid, amount });
-                for (let i = 0; i < messages.length; ++i) {
-                    JonoUtils.deleteMessage(messages[i].channel_id, messages[i].id);
-                    await JonoUtils.sleep(500);
-                }
+        //         const messages = await JonoUtils.getMessages({ userid, amount });
+        //         for (let i = 0; i < messages.length; ++i) {
+        //             JonoUtils.deleteMessage(messages[i].channel_id, messages[i].id);
+        //             await JonoUtils.sleep(500);
+        //         }
 
-                JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), `Purged ${amount} messages`);
-        });
+        //         JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), `Purged ${amount} messages`);
+        // });
 
         // eval
         this.addCommand("eval", "Evaluates javascript codenz", ["code"], [])
@@ -518,8 +518,8 @@ class JonoPlugin {
 
         // clear
         this.addCommand("clear", "Clears chat", [], [])
-            .onCommand(args => {
-                JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), "`." + "\n".repeat(1990) + "cleared`");
+            .onCommand(() => {
+                JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), "`." + "\n".repeat(1990) + "cleared`");
         });
 
         // imdb
