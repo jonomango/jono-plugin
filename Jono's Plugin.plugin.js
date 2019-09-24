@@ -82,6 +82,24 @@ class JonoPlugin {
 
         this.setupCommands();
         this.onSwitch();
+
+        // const iframe = document.createElement("iframe");
+
+        // iframe.width = "560";
+        // iframe.height = "315";
+        // iframe.src = `https://www.youtube.com/embed/${"7pHpJn-s-Uw"}`;
+        // //iframe.src = "//vidcloud.icu/streaming.php?id=MTE0MDM2"
+        // //iframe.src = "//vidcloud.icu/streaming.php?id=MTE0ODEx"
+        // iframe.frameborder = "0";
+        // iframe.allow = "accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture";
+        // iframe.allowFullscreen = "true";
+        // iframe.style["border-radius"] = "5px";
+
+        // const window = JonoUtils.createWindow({
+        //     title: "Vsauce, Michael Here"
+        // });
+
+        // window.appendChild(iframe);
     }
     stop() {
         JonoUtils.saveSettings();
@@ -847,24 +865,13 @@ class JonoPlugin {
                     return;
                 }
 
-                const app_element = JonoUtils.getAppElement();
+                const window = JonoUtils.createWindow({ title: "Draw" });
                 let clicked_array = [...Array(width)].map(() => [...Array(height)].map(() => false));
-
-                const drawing_container = document.createElement("div");
-                drawing_container.className = "jono-drawing-container";
-
-                drawing_container.style["background-color"] = "rgb(40, 40, 40)";
-                drawing_container.style["position"] = "fixed";
-                drawing_container.style["z-index"] = "999999";
-                drawing_container.style["left"] = "400px";
-                drawing_container.style["bottom"] = "200px";
-                drawing_container.style["border-radius"] = "8px";
 
                 /* table */
                 const table = document.createElement("table");
                 table.style["border-collapse"] = "collapse";
                 table.style["background-color"] = "rgb(60, 60, 60)";
-                table.style["margin"] = "10px";
 
                 // each td is a square
                 for (let y = 0; y < height; ++y) {
@@ -896,14 +903,14 @@ class JonoPlugin {
                     }
                 }
 
-                drawing_container.appendChild(table);
+                window.appendChild(table);
                 /* table */
 
                 /* submit button */
                 const submit_button = document.createElement("div");
 
                 submit_button.innerText = "Submit";
-                submit_button.style["margin"] = "10px";
+                submit_button.style["margin-top"] = "8px";
                 submit_button.style["padding"] = "2px";
                 submit_button.style["color"] = "lightgrey";
                 submit_button.style["text-align"] = "center";
@@ -911,7 +918,7 @@ class JonoPlugin {
                 submit_button.style["background-color"] = "rgb(60, 60, 60)";
 
                 submit_button.onclick = () => {
-                    drawing_container.remove();
+                    JonoUtils.removeWindow(window);
 
                     const channelid = JonoUtils.getCurrentChannelID();
                     if (!channelid) {
@@ -941,15 +948,13 @@ class JonoPlugin {
                     }
                 };
 
-                drawing_container.appendChild(submit_button);
+                window.appendChild(submit_button);
                 /* submit button */
-
-                app_element.appendChild(drawing_container);
         });
 
         this.addCommand("test", "Testing purposes", [], [])
             .onCommand(args => {
-                console.log(JonoUtils.array_difference(["frog1", "frog2", "cheese"], ["frog1", "nigga", "frog2"]));
+
         });
     }
 }
@@ -1028,8 +1033,7 @@ const JonoUtils = {
     release: () => {
         JonoUtils._removeDispatchHooks();
         JonoUtils._removeContextHooks();
-
-        document.querySelectorAll(".jono-drawing-container").forEach(x => x.remove());
+        JonoUtils._removeWindows();
 
         clearInterval(JonoUtils.heartbeat_interval);
     },
@@ -1468,6 +1472,77 @@ const JonoUtils = {
 
         outer_div.appendChild(main_div);
         return outer_div;
+    },
+
+    createWindow: (options = {}) => {
+        const app_element = JonoUtils.getAppElement();
+        if (!app_element) {
+            return null;
+        }
+
+        const spacing = options.spacing || 8;
+
+        // window
+        const window_div = document.createElement("div");
+        window_div.className = "jono-window bd-toast"; // styled like toasts
+
+        window_div.style["pointer-events"] = "auto"; // accept input
+        window_div.style["z-index"] = "3999"; // toasts are 4000 (they have priority)
+        window_div.style["position"] = "fixed";
+        window_div.style["top"] = `${app_element.height() / 2}px`;
+        window_div.style["left"] = `${(app_element.width() / 2)}px`;
+        window_div.style["padding"] = "0";
+        
+        // dimensions (if provided)
+        if (options.width) {
+            window_div.style["width"] = `${options.width}px`;
+        }
+        if (options.height) {
+            window_div.style["height"] = `${options.height}px`;
+        }
+
+        // titlebar
+        if (options.title) {
+            const titlebar = document.createElement("div");
+
+            titlebar.innerText = options.title;
+            titlebar.style["padding"] = `${spacing}px`;
+            titlebar.style["padding-bottom"] = "0";
+            titlebar.style["margin-bottom"] = `${spacing}px`;
+
+            // window dragging
+            titlebar.onmousedown = () => {
+                const rect = window_div.getBoundingClientRect();
+                const offset = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+
+                const onMouseUp = () => {
+                    document.removeEventListener("mousemove", onMouseMove);
+                    document.removeEventListener("mouseup", onMouseUp);
+                };
+                const onMouseMove = () => {
+                    window_div.style["left"] = `${event.clientX - offset.x}px`;
+                    window_div.style["top"] = `${event.clientY - offset.y}px`;
+                };
+
+                document.addEventListener("mouseup", onMouseUp);
+                document.addEventListener("mousemove", onMouseMove);
+            };
+
+            window_div.appendChild(titlebar);
+        }
+
+        const content_div = document.createElement("div");
+        content_div.style["margin"] = `${spacing}px`;
+        window_div.appendChild(content_div);
+
+        app_element.appendChild(window_div);
+        return content_div;
+    },
+    removeWindow: window => {
+        window.parentElement.remove();
+    },
+    _removeWindows: () => {
+        document.querySelectorAll("div.jono-window").forEach(x => x.remove());
     },
 
     isUserOnline: userid => {
