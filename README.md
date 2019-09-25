@@ -12,6 +12,9 @@ A plugin for [BetterDiscord](https://betterdiscord.net/home/). Uses no external 
   
   ![Example](https://imgur.com/9ItTomv.gif)
 
+### Popout YouTube Videos
+  Adds the option to pop out youtube videos into a new window when clicking on a youtube link. This new window is draggable, resizeable, and will persist even when switching channels/servers. Very similar to a Discord RichEmbed except it's in a new window.
+
 ### Commands
   By default, commands have the prefix `~`. This can be changed in the plugin settings. Optional arguments are prefixed by a `?`. Calling commands is simple, just type the prefix followed by the command name followed by the command arguments (if any).  
   

@@ -6,7 +6,7 @@ class JonoPlugin {
         return "Jono's Plugin";
     }
     getDescription() {
-        return "general purpose plugin";
+        return "plugin that does plugin stuff";
     }
     getVersion() {
         return "1.0";
@@ -243,6 +243,45 @@ class JonoPlugin {
         if (react_instance.return.stateNode) {
             react_instance.return.stateNode.props.onHeightUpdate();
         }
+    }
+    onClick() {
+        const target = event.target;
+        if (target.nodeName != "A") {
+            return;
+        }
+
+        const removeTrailingSlashes = str => {
+            while (str.length > 0 && str[str.length - 1] == "/") {
+                str = str.slice(0, str.length - 1);
+            }
+            return str;
+        }
+
+        const url = new JonoUtils.url.URL(target.href);
+
+        let video_id = null;
+        if (url.hostname == "www.youtube.com" && (url.pathname == "/watch" || url.pathname == "/watch/")) {
+            video_id = removeTrailingSlashes(url.searchParams.get("v"));
+        } else if (url.hostname == "youtu.be") {
+            video_id = removeTrailingSlashes(url.pathname.slice(1));
+        }
+
+        if (!video_id) {
+            return;
+        }
+
+        event.preventDefault();
+        BdApi.showConfirmationModal("YouTube", "How do you wish to view this video?", {          
+            confirmText: "Embed",
+            onConfirm: () => {
+                JonoUtils.createEmbed("YouTube", `https://www.youtube.com/embed/${video_id}?autoplay=1&start=${url.searchParams.get("t") || 0}`);
+            },
+
+            cancelText: "New Tab",
+            onCancel: () => {
+                JonoUtils.electron.shell.openExternal(target.href);
+            }
+        });
     }
     onHeartbeat() {
         if (!JonoUtils.settings.custom_notifications.status_updates) {
@@ -855,9 +894,8 @@ class JonoPlugin {
                 }
 
                 const window = JonoUtils.createWindow({ 
-                    titlebar: {
-                        title: "Draw"
-                    }
+                    title: "Draw",
+                    noresize: true
                 });
 
                 let clicked_array = [...Array(width)].map(() => [...Array(height)].map(() => false));
@@ -995,8 +1033,11 @@ const JonoUtils = {
         JonoUtils.MessagesSelector = BdApi.findModuleByProps("username", "divider");
         JonoUtils.AppSelector = BdApi.findModuleByProps("app");
 
-        // request wrapper that uses promises
+        JonoUtils.url = require("url");
         JonoUtils.request = require("request");
+        JonoUtils.electron = require("electron");
+
+        // request wrapper that uses promises
         JonoUtils.request_promise = options => {
             return new Promise((resolve, reject) => {
                 JonoUtils.request(options, (error, response, data) => {
@@ -1008,15 +1049,22 @@ const JonoUtils = {
             });
         };
 
-        // dispatch custom callback
-        JonoUtils._hookDispatch(data => {
+        // dispatch callback
+        JonoUtils.dispatch_unpatch = BdApi.monkeyPatch(BdApi.findModuleByProps("dispatch"), 'dispatch', { after: data => {
             if (JonoUtils.main_plugin.onDispatch) {
                 JonoUtils.main_plugin.onDispatch(data);
             }
+        }});
+
+        // click callback
+        document.addEventListener("click", JonoUtils.click_event_listener = () => {
+            if (JonoUtils.main_plugin.onClick) {
+                JonoUtils.main_plugin.onClick();
+            }
         });
 
-        // context menu custom callback
-        JonoUtils._hookContextMenu(() => {
+        // context menu callback
+        document.addEventListener("contextmenu", JonoUtils.context_menu_event_listener = () => {
             if (JonoUtils.main_plugin.onContextMenu) {
                 JonoUtils.main_plugin.onContextMenu();
             }
@@ -1034,41 +1082,11 @@ const JonoUtils = {
         }, 2000);
     },
     release: () => {
-        JonoUtils._removeDispatchHooks();
-        JonoUtils._removeContextHooks();
-        JonoUtils._removeWindows();
+        JonoUtils.dispatch_unpatch();
+        document.removeEventListener("click", JonoUtils.click_event_listener);
+        document.removeEventListener("contextmenu", JonoUtils.context_menu_event_listener);
 
         clearInterval(JonoUtils.heartbeat_interval);
-    },
-
-    // dispatch callbacks
-    _hookDispatch: func => {
-        const unpatchFunc = BdApi.monkeyPatch(BdApi.findModuleByProps("dispatch"), 'dispatch', { after: func });
-        JonoUtils.unpatchFuncs = JonoUtils.unpatchFuncs || [];
-        JonoUtils.unpatchFuncs.push(unpatchFunc)
-    },
-    _removeDispatchHooks: () => {
-        if (!JonoUtils.unpatchFuncs) {
-            return;
-        }
-
-        JonoUtils.unpatchFuncs.forEach(func => func());
-        JonoUtils.unpatchFuncs = []
-    },
-
-    // context menu callbacks
-    _hookContextMenu: func => {
-        document.addEventListener("contextmenu", func);
-        JonoUtils.contextListeners = JonoUtils.contextListeners || [];
-        JonoUtils.contextListeners.push(func);
-    },
-    _removeContextHooks: () => {
-        if (!JonoUtils.contextListeners) {
-            return;
-        }
-
-        JonoUtils.contextListeners.forEach(func => document.removeEventListener("contextmenu", func));
-        JonoUtils.contextListeners = [];
     },
 
     getUser: userid => {
@@ -1477,18 +1495,36 @@ const JonoUtils = {
         return outer_div;
     },
 
+    /*
+    options = {
+        width: 200,
+        height: 200,
+        ratio: 9/16,
+        spacing: 10,
+        title: "Title",
+        noclose: false,
+        noresize: false,
+        
+        callbacks: {
+            ondragstart: () => {},
+            ondragend: () => {},
+            onclose: () => {},
+        }
+    }
+    */
     createWindow: (options = {}) => {
         const app_element = JonoUtils.getAppElement();
         if (!app_element) {
             return null;
         }
 
+        const window_id = Date.now().toString();
         const callbacks = options.callbacks || {};
         const spacing = options.spacing || 10;
 
         // window
         const window_div = document.createElement("div");
-        window_div.className = "jono-window bd-toast"; // styled like toasts
+        window_div.className = `jono-window jono-window-id-${window_id} bd-toast`; // styled like toasts
 
         window_div.style["pointer-events"] = "auto"; // accept input
         window_div.style["z-index"] = "3999"; // toasts are 4000 (they have priority)
@@ -1496,63 +1532,65 @@ const JonoUtils = {
         window_div.style["top"] = `${app_element.height() / 2}px`;
         window_div.style["left"] = `${(app_element.width() / 2)}px`;
         window_div.style["padding"] = "0";
-        
-        // dimensions (if provided)
-        if (options.width) {
-            window_div.style["width"] = `${options.width}px`;
-        }
-        if (options.height) {
-            window_div.style["height"] = `${options.height}px`;
-        }
 
         // content container
         const content_div = document.createElement("div");
         content_div.style["margin"] = `${spacing}px`;
+        content_div.style["overflow"] = "hidden"
+
+        // dimensions (if provided)
+        if (options.width) {
+            content_div.style["width"] = `${options.width}px`;
+        }
+        if (options.height) {
+            content_div.style["height"] = `${options.height}px`;
+        }
 
         // titlebar
-        let titlebar = null;
-        if (options.titlebar) {
-            titlebar = document.createElement("div");
-            window_div.appendChild(titlebar);
+        let titlebar = document.createElement("div");
+        window_div.appendChild(titlebar);
 
-            titlebar.innerText = options.titlebar.title || "";
-            titlebar.style["padding"] = `${spacing}px`;
-            titlebar.style["padding-bottom"] = "0";
-            titlebar.style["margin-bottom"] = `${spacing}px`;
+        titlebar.innerText = options.title || "";
+        titlebar.style["margin-bottom"] = `${spacing}px`;
+        titlebar.style["padding"] = `${spacing}px`;
+        titlebar.style["padding-bottom"] = "0";
 
-            // window dragging
-            titlebar.onmousedown = () => {
-                if (event.target != titlebar) {
-                    return;
+        // window dragging
+        titlebar.onmousedown = () => {
+            if (event.target != titlebar) {
+                return;
+            }
+
+            if (callbacks.ondragstart) {
+                callbacks.ondragstart();
+            }
+
+            const rect = window_div.getBoundingClientRect();
+            const offset = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+
+            const onMouseUp = () => {
+                if (callbacks.ondragend) {
+                    callbacks.ondragend();
                 }
 
-                if (callbacks.ondragstart) {
-                    callbacks.ondragstart()
-                }
-
-                content_div.style["pointer-events"] = "none";
-
-                const rect = window_div.getBoundingClientRect();
-                const offset = { x: event.clientX - rect.left, y: event.clientY - rect.top };
-
-                const onMouseUp = () => {
-                    if (callbacks.ondragend) {
-                        callbacks.ondragend()
-                    }
-
-                    content_div.style["pointer-events"] = "auto";
-                    document.removeEventListener("mousemove", onMouseMove);
-                    document.removeEventListener("mouseup", onMouseUp);
-                };
-                const onMouseMove = () => {
-                    window_div.style["left"] = `${event.clientX - offset.x}px`;
-                    window_div.style["top"] = `${event.clientY - offset.y}px`;
-                };
-
-                document.addEventListener("mouseup", onMouseUp);
-                document.addEventListener("mousemove", onMouseMove);
+                content_div.style["pointer-events"] = "auto";
+                document.removeEventListener("mousemove", onMouseMove);
+                document.removeEventListener("mouseup", onMouseUp);
+            };
+            const onMouseMove = () => {
+                window_div.style["left"] = `${event.clientX - offset.x}px`;
+                window_div.style["top"] = `${event.clientY - offset.y}px`;
             };
 
+            // ignore mouse input when dragging the window
+            content_div.style["pointer-events"] = "none";
+
+            document.addEventListener("mouseup", onMouseUp);
+            document.addEventListener("mousemove", onMouseMove);
+        };
+
+        // add close button
+        if (!options.noclose) {
             // close button
             const close_button = document.createElement("div");
             titlebar.append(close_button);
@@ -1564,7 +1602,7 @@ const JonoUtils = {
 
             close_button.onclick = () => {
                 if (callbacks.onclose) {
-                    callbacks.onclose()
+                    callbacks.onclose();
                 }
 
                 window_div.remove();
@@ -1590,31 +1628,134 @@ const JonoUtils = {
             polygon.setAttribute("points", "11 1.576 6.583 6 11 10.424 10.424 11 6 6.583 1.576 11 1 10.424 5.417 6 1 1.576 1.576 1 6 5.417 10.424 1");
         }
 
+        // window resizing
+        if (!options.noresize) {
+            window_div.onmousedown = () => {
+                if (event.target != window_div) {
+                    return;
+                }
+
+                const { right, bottom } = window_div.getBoundingClientRect();
+                const delta = { x: event.x - right, y: event.y - bottom };
+
+                const onMouseUp = () => {
+                    if (callbacks.onresize) {
+                        callbacks.onresize({ width: content_div.width(), height: content_div.height() });
+                    }
+
+                    window_div.style["cursor"] = "auto";
+                    content_div.style["pointer-events"] = "auto";
+
+                    document.removeEventListener("mousemove", onMouseMove);
+                    document.removeEventListener("mouseup", onMouseUp);
+                };
+                const onMouseMove = () => {
+                    const { left: x, top: y } = content_div.getBoundingClientRect();
+
+                    let width = null, 
+                        height = null;
+
+                    // this is a lot bigger than it should be (because of maintaining ratio)
+                    if (delta.x >= -spacing && delta.y >= -spacing) { // bottom right
+                        width = (event.x - x + delta.x);
+                        height = (event.y - y + delta.y);
+
+                        // maintain ratio
+                        if (options.ratio) {
+                            if (width * options.ratio > height) {
+                                height = width * options.ratio;
+                            } else {
+                                width = height / options.ratio;
+                            }
+                        }
+                    } else if (delta.x >= -spacing) { // right
+                        window_div.style["cursor"] = "e-resize";
+
+                        width = event.x - x + delta.x;
+                        if (options.ratio) {
+                            height = width * options.ratio;
+                        }
+                    } else if (delta.y >= -spacing) { // bottom
+                        height = event.y - y + delta.y;
+                        if (options.ratio) {
+                            width = height / options.ratio;
+                        }
+                    }
+
+                    content_div.style["width"] = `${width}px`;
+                    content_div.style["height"] = `${height}px`;
+                };
+    
+                // ignore mouse input when resizing the window
+                content_div.style["pointer-events"] = "none";
+
+                document.addEventListener("mouseup", onMouseUp);
+                document.addEventListener("mousemove", onMouseMove);
+            };
+
+            // for the cursors
+            const onMouseMove = () => {
+                if (!document.querySelector(`.jono-window-id-${window_id}`)) {
+                    document.removeEventListener("mousemove", onMouseMove);
+                    return;
+                }
+
+                window_div.style["cursor"] = "auto";
+                if (event.target != window_div) {
+                    return;
+                }
+
+                const { right, bottom } = window_div.getBoundingClientRect();
+                const delta = { x: event.x - right, y: event.y - bottom };
+
+                if (delta.x >= -spacing && delta.y >= -spacing) { // bottom right
+                    window_div.style["cursor"] = "nwse-resize";
+                } else if (delta.x >= -spacing) { // right
+                    window_div.style["cursor"] = "ew-resize";
+                } else if (delta.y >= -spacing) { // bottom
+                    window_div.style["cursor"] = "ns-resize";
+                }
+            };
+
+            document.addEventListener("mousemove", onMouseMove);
+        }
+
         window_div.appendChild(content_div);
         app_element.appendChild(window_div);
         
         return { 
             window: window_div, 
             titlebar: titlebar, 
-            content: content_div 
+            content: content_div,
+            id: window_id
         };
     },
     createEmbed: (title, src) => {
         const iframe = document.createElement("iframe");
 
+        iframe.src = src;
         iframe.width = "560";
         iframe.height = "315";
-        iframe.src = src;
         iframe.frameborder = "0";
         iframe.allowFullscreen = "true";
         iframe.style["border-radius"] = "4px";
 
-        JonoUtils.createWindow({
+        // 16/9 ratio
+        const window = JonoUtils.createWindow({
+            title,
             spacing: 10,
-            titlebar: {
-                title,
+            width: 560,
+            height: 315,
+            ratio: 9/16,
+            callbacks: {
+                onresize: dimensions => {
+                    iframe.width = dimensions.width;
+                    iframe.height = dimensions.height;
+                }
             }
-        }).content.appendChild(iframe);
+        });
+
+        window.content.appendChild(iframe);
     },
     _removeWindows: () => {
         document.querySelectorAll("div.jono-window").forEach(x => x.remove());
