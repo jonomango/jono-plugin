@@ -82,24 +82,6 @@ class JonoPlugin {
 
         this.setupCommands();
         this.onSwitch();
-
-        // const iframe = document.createElement("iframe");
-
-        // iframe.width = "560";
-        // iframe.height = "315";
-        // iframe.src = `https://www.youtube.com/embed/${"7pHpJn-s-Uw"}`;
-        // //iframe.src = "//vidcloud.icu/streaming.php?id=MTE0MDM2"
-        // //iframe.src = "//vidcloud.icu/streaming.php?id=MTE0ODEx"
-        // iframe.frameborder = "0";
-        // iframe.allow = "accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture";
-        // iframe.allowFullscreen = "true";
-        // iframe.style["border-radius"] = "5px";
-
-        // const window = JonoUtils.createWindow({
-        //     title: "Vsauce, Michael Here"
-        // });
-
-        // window.appendChild(iframe);
     }
     stop() {
         JonoUtils.saveSettings();
@@ -225,8 +207,11 @@ class JonoPlugin {
             return;
         }
 
-        const channel = props.channel, guild = props.guild;
-        if (!channel && !guild) {
+        const channel = props.channel, 
+            guild = props.guild,
+            message = props.message;
+
+        if (message || (!channel && !guild)) {
             return;
         }
 
@@ -525,7 +510,11 @@ class JonoPlugin {
         // eval
         this.addCommand("eval", "Evaluates javascript codenz", ["code"], [])
             .onCommand(args => {
-                JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), String(eval(args.code)));
+                try {
+                    JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), String(eval(args.code)));
+                } catch (e) {
+                    JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), e.toString());
+                }
         });
 
         // repeat
@@ -865,7 +854,12 @@ class JonoPlugin {
                     return;
                 }
 
-                const window = JonoUtils.createWindow({ title: "Draw" });
+                const window = JonoUtils.createWindow({ 
+                    titlebar: {
+                        title: "Draw"
+                    }
+                });
+
                 let clicked_array = [...Array(width)].map(() => [...Array(height)].map(() => false));
 
                 /* table */
@@ -903,7 +897,7 @@ class JonoPlugin {
                     }
                 }
 
-                window.appendChild(table);
+                window.content.appendChild(table);
                 /* table */
 
                 /* submit button */
@@ -918,7 +912,7 @@ class JonoPlugin {
                 submit_button.style["background-color"] = "rgb(60, 60, 60)";
 
                 submit_button.onclick = () => {
-                    JonoUtils.removeWindow(window);
+                    window.window.remove();
 
                     const channelid = JonoUtils.getCurrentChannelID();
                     if (!channelid) {
@@ -948,13 +942,22 @@ class JonoPlugin {
                     }
                 };
 
-                window.appendChild(submit_button);
+                window.content.appendChild(submit_button);
                 /* submit button */
+        });
+
+        // pickle
+        this.addCommand("pickle", "Watch the pickle rick episode", [], [])
+            .onCommand(args => {
+                JonoUtils.createEmbed("Pickle Rick", "//vidcloud.icu/streaming.php?id=MTAxOTAy");
         });
 
         this.addCommand("test", "Testing purposes", [], [])
             .onCommand(args => {
 
+        //iframe.src = `https://www.youtube.com/embed/${"7pHpJn-s-Uw"}`;
+        //iframe.src = "//vidcloud.icu/streaming.php?id=MTE0MDM2"
+        //iframe.src = "//vidcloud.icu/streaming.php?id=MTE0ODEx";
         });
     }
 }
@@ -1480,7 +1483,8 @@ const JonoUtils = {
             return null;
         }
 
-        const spacing = options.spacing || 8;
+        const callbacks = options.callbacks || {};
+        const spacing = options.spacing || 10;
 
         // window
         const window_div = document.createElement("div");
@@ -1501,21 +1505,42 @@ const JonoUtils = {
             window_div.style["height"] = `${options.height}px`;
         }
 
-        // titlebar
-        if (options.title) {
-            const titlebar = document.createElement("div");
+        // content container
+        const content_div = document.createElement("div");
+        content_div.style["margin"] = `${spacing}px`;
 
-            titlebar.innerText = options.title;
+        // titlebar
+        let titlebar = null;
+        if (options.titlebar) {
+            titlebar = document.createElement("div");
+            window_div.appendChild(titlebar);
+
+            titlebar.innerText = options.titlebar.title || "";
             titlebar.style["padding"] = `${spacing}px`;
             titlebar.style["padding-bottom"] = "0";
             titlebar.style["margin-bottom"] = `${spacing}px`;
 
             // window dragging
             titlebar.onmousedown = () => {
+                if (event.target != titlebar) {
+                    return;
+                }
+
+                if (callbacks.ondragstart) {
+                    callbacks.ondragstart()
+                }
+
+                content_div.style["pointer-events"] = "none";
+
                 const rect = window_div.getBoundingClientRect();
                 const offset = { x: event.clientX - rect.left, y: event.clientY - rect.top };
 
                 const onMouseUp = () => {
+                    if (callbacks.ondragend) {
+                        callbacks.ondragend()
+                    }
+
+                    content_div.style["pointer-events"] = "auto";
                     document.removeEventListener("mousemove", onMouseMove);
                     document.removeEventListener("mouseup", onMouseUp);
                 };
@@ -1528,18 +1553,68 @@ const JonoUtils = {
                 document.addEventListener("mousemove", onMouseMove);
             };
 
-            window_div.appendChild(titlebar);
+            // close button
+            const close_button = document.createElement("div");
+            titlebar.append(close_button);
+
+            close_button.style["float"] = "right";
+            close_button.style["width"] = "12px";
+            close_button.style["height"] = "12px";
+            close_button.style["padding"] = "2px";
+
+            close_button.onclick = () => {
+                if (callbacks.onclose) {
+                    callbacks.onclose()
+                }
+
+                window_div.remove();
+            };
+
+            close_button.onmouseover = () => close_button.style["background-color"] = "red"           
+            close_button.onmouseout = () => close_button.style["background-color"] = null;
+
+            // svg
+            const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg")
+            close_button.append(svg);
+
+            svg.setAttribute("width", "12px");
+            svg.setAttribute("height", "12px");
+            svg.setAttribute("viewport", "0 0 12 12");
+
+            // polygon
+            const polygon = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+            svg.appendChild(polygon);
+
+            polygon.setAttribute("fill", "white");
+            polygon.setAttribute("fill-rule", "evenodd");
+            polygon.setAttribute("points", "11 1.576 6.583 6 11 10.424 10.424 11 6 6.583 1.576 11 1 10.424 5.417 6 1 1.576 1.576 1 6 5.417 10.424 1");
         }
 
-        const content_div = document.createElement("div");
-        content_div.style["margin"] = `${spacing}px`;
         window_div.appendChild(content_div);
-
         app_element.appendChild(window_div);
-        return content_div;
+        
+        return { 
+            window: window_div, 
+            titlebar: titlebar, 
+            content: content_div 
+        };
     },
-    removeWindow: window => {
-        window.parentElement.remove();
+    createEmbed: (title, src) => {
+        const iframe = document.createElement("iframe");
+
+        iframe.width = "560";
+        iframe.height = "315";
+        iframe.src = src;
+        iframe.frameborder = "0";
+        iframe.allowFullscreen = "true";
+        iframe.style["border-radius"] = "4px";
+
+        JonoUtils.createWindow({
+            spacing: 10,
+            titlebar: {
+                title,
+            }
+        }).content.appendChild(iframe);
     },
     _removeWindows: () => {
         document.querySelectorAll("div.jono-window").forEach(x => x.remove());

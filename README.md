@@ -61,3 +61,6 @@ A plugin for [BetterDiscord](https://betterdiscord.net/home/). Uses no external 
   Usage: `~draw [caption] [?width] [?height]`  
   
   ![Example](https://imgur.com/qSjw1lG.gif)
+#### _pickle_
+  Watch the Pickle Rick episode.  
+  Usage: `~pickle`  
