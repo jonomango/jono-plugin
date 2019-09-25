@@ -250,38 +250,82 @@ class JonoPlugin {
             return;
         }
 
+        const url = new JonoUtils.url.URL(target.href);
+
+        // removes any forward slashes at the end of a str
         const removeTrailingSlashes = str => {
             while (str.length > 0 && str[str.length - 1] == "/") {
                 str = str.slice(0, str.length - 1);
             }
             return str;
-        }
+        };
+        const chooseOption = onconfirm => {
+            event.preventDefault();
 
-        const url = new JonoUtils.url.URL(target.href);
-
-        let video_id = null;
-        if (url.hostname == "www.youtube.com" && (url.pathname == "/watch" || url.pathname == "/watch/")) {
-            video_id = removeTrailingSlashes(url.searchParams.get("v"));
-        } else if (url.hostname == "youtu.be") {
-            video_id = removeTrailingSlashes(url.pathname.slice(1));
-        }
-
-        if (!video_id) {
-            return;
-        }
-
-        event.preventDefault();
-        BdApi.showConfirmationModal("YouTube", "How do you wish to view this video?", {          
-            confirmText: "Embed",
-            onConfirm: () => {
-                JonoUtils.createEmbed("YouTube", `https://www.youtube.com/embed/${video_id}?autoplay=1&start=${url.searchParams.get("t") || 0}`);
-            },
-
-            cancelText: "New Tab",
-            onCancel: () => {
-                JonoUtils.electron.shell.openExternal(target.href);
+            BdApi.showConfirmationModal("Jono's Plugin", "How do you wish to view this video?", {          
+                confirmText: "Discord",
+                onConfirm: onconfirm,
+    
+                cancelText: "Browser",
+                onCancel: () => JonoUtils.electron.shell.openExternal(target.href)
+            });
+        };
+        const openYoutubeInDiscord = (id, time) => {
+            JonoUtils.createIframeWindow(`https://www.youtube.com/embed/${removeTrailingSlashes(id)}?autoplay=1&start=${time || 0}`, {
+                title: "YouTube",
+                ratio: 9/16
+            });
+        };
+        const openTwitchInDiscord = path => {
+            path = removeTrailingSlashes(path).split("/");
+            if (path.length <= 0) {
+                return;
             }
-        });
+
+            const channelname = path[0];
+            if (path.length == 3) { // clip
+                if (path[1] != "clip") {
+                    return;
+                }
+
+                JonoUtils.createIframeWindow(`https://clips.twitch.tv/embed?clip=${path[2]}`, {
+                    title: "Twitch",
+                    ratio: 9/16
+                });
+            } else { // channel
+                JonoUtils.createIframeWindow(`https://player.twitch.tv/?channel=${channelname}`, {
+                    title: "Twitch",
+                    ratio: 9/16,
+                    x: 200,
+                    y: 200
+                });
+
+                JonoUtils.createIframeWindow(`https://www.twitch.tv/embed/${channelname}/chat`, {
+                    title: "Twitch Chat",
+                    x: 800,
+                    y: 200,
+                    height: 600,
+                    width: 400
+                });
+            }
+        };
+
+        // parse the clicked link for videos
+        switch (url.hostname) {
+            case "youtu.be":
+                chooseOption(() => openYoutubeInDiscord(url.pathname.slice(1), url.searchParams.get("t")));
+                break;
+            case "youtube.com":
+            case "www.youtube.com":
+                if (url.pathname == "/watch" || url.pathname == "/watch/") {
+                    chooseOption(() => openYoutubeInDiscord(url.searchParams.get("v"), url.searchParams.get("t")));
+                }
+                break;
+            case "twitch.tv":
+            case "www.twitch.tv":
+                chooseOption(() => openTwitchInDiscord(url.pathname.slice(1)));
+                break;
+        }
     }
     onHeartbeat() {
         if (!JonoUtils.settings.custom_notifications.status_updates) {
@@ -987,12 +1031,16 @@ class JonoPlugin {
         // pickle
         this.addCommand("pickle", "Watch the pickle rick episode", [], [])
             .onCommand(args => {
-                JonoUtils.createEmbed("Pickle Rick", "//vidcloud.icu/streaming.php?id=MTAxOTAy");
+                JonoUtils.createIframeWindow("//vidcloud.icu/streaming.php?id=MTAxOTAy", {
+                    title: "Pickle Rick",
+                    ratio: 9/16
+                });
         });
 
         this.addCommand("test", "Testing purposes", [], [])
             .onCommand(args => {
-
+                
+        //https://player.twitch.tv/?channel=dallas&muted=true
         //iframe.src = `https://www.youtube.com/embed/${"7pHpJn-s-Uw"}`;
         //iframe.src = "//vidcloud.icu/streaming.php?id=MTE0MDM2"
         //iframe.src = "//vidcloud.icu/streaming.php?id=MTE0ODEx";
@@ -1082,6 +1130,7 @@ const JonoUtils = {
         }, 2000);
     },
     release: () => {
+        JonoUtils._removeWindows();
         JonoUtils.dispatch_unpatch();
         document.removeEventListener("click", JonoUtils.click_event_listener);
         document.removeEventListener("contextmenu", JonoUtils.context_menu_event_listener);
@@ -1497,6 +1546,8 @@ const JonoUtils = {
 
     /*
     options = {
+        x: 123,
+        y: 123,
         width: 200,
         height: 200,
         ratio: 9/16,
@@ -1510,8 +1561,7 @@ const JonoUtils = {
             ondragend: () => {},
             onclose: () => {},
         }
-    }
-    */
+    }*/
     createWindow: (options = {}) => {
         const app_element = JonoUtils.getAppElement();
         if (!app_element) {
@@ -1529,8 +1579,8 @@ const JonoUtils = {
         window_div.style["pointer-events"] = "auto"; // accept input
         window_div.style["z-index"] = "3999"; // toasts are 4000 (they have priority)
         window_div.style["position"] = "fixed";
-        window_div.style["top"] = `${app_element.height() / 2}px`;
-        window_div.style["left"] = `${(app_element.width() / 2)}px`;
+        window_div.style["left"] = `${options.x || app_element.width() / 2}px`;
+        window_div.style["top"] = `${options.y || app_element.height() / 2}px`;
         window_div.style["padding"] = "0";
 
         // content container
@@ -1730,23 +1780,32 @@ const JonoUtils = {
             id: window_id
         };
     },
-    createEmbed: (title, src) => {
+      
+    // src examples:
+    // twitch: https://player.twitch.tv/?channel=${channelname}
+    // youtube: https://www.youtube.com/embed/${videoid}
+    createIframeWindow: (src, options = {}) => {
+        const width = options.width || 560,
+            height = options.height || 315;
+
         const iframe = document.createElement("iframe");
 
         iframe.src = src;
-        iframe.width = "560";
-        iframe.height = "315";
+        iframe.width = width;
+        iframe.height = height;
         iframe.frameborder = "0";
         iframe.allowFullscreen = "true";
         iframe.style["border-radius"] = "4px";
 
         // 16/9 ratio
         const window = JonoUtils.createWindow({
-            title,
+            title: options.title || "",
+            ratio: options.ratio,
+            x: options.x,
+            y: options.y,
+            width: width,
+            height: height,
             spacing: 10,
-            width: 560,
-            height: 315,
-            ratio: 9/16,
             callbacks: {
                 onresize: dimensions => {
                     iframe.width = dimensions.width;
