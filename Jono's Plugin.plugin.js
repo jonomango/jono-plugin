@@ -77,21 +77,15 @@ class JonoPlugin {
             api_keys: {
                 omdbapi: "",
                 ipdata: ""
-            }
+            },
+            aliases: {}
         });
 
         this.setupCommands();
-        this.onSwitch();
+        this.setupAliases();
     }
     stop() {
         JonoUtils.saveSettings();
-
-        // remove keydown listener
-        const textarea = JonoUtils.getTextArea();
-        if (textarea) {
-            textarea.removeEventListener("keydown", this.keydownEventListener);
-        }
-
         JonoUtils.release();
     }
 
@@ -356,52 +350,29 @@ class JonoPlugin {
         }
     }
     onSwitch() {
-        // attach keydown listener
-        const textarea = JonoUtils.getTextArea();
-        if (textarea) {
-            textarea.addEventListener("keydown", this.keydownEventListener = this.onKeyDown.bind(this));
-        }
+        JonoUtils.onSwitch();
     }
-    onKeyDown(e) {
-        const cancelInput = () => {
-            // dont send the original text into the channel
-            const el = document.querySelector('.chat-3bRxxu form');
-            if (el) {
-                BdApi.getInternalInstance(el).return.stateNode.setState({ textValue: "" });
-            }
-        };
-
-        if (e.key != "Enter" || e.shiftKey || e.ctrlKey || e.altKey) {
-            return;
-        }
-
-        const textarea = JonoUtils.getTextArea();
-        if (!textarea) {
-            return;
-        }
-
-        let input = textarea.value;
+    onInput(input) {
         if (input.length <= 0) {
             return;
         }
 
         // if not command, call the on_input() callback
         if (!input.startsWith(JonoUtils.settings.command_prefix)) {
+            let ret = null;
+
             for (const key in this.commands) {
                 if (!this.commands[key].callbacks.on_input) {
                     continue;
                 }
 
                 if (this.commands[key].callbacks.on_input(input)) {
-                    cancelInput();
+                    ret = "";
                 }
             }
 
-            return;
+            return ret;
         }
-
-        // dont send the message into chat if its a command
-        cancelInput();
 
         input = input.slice(JonoUtils.settings.command_prefix.length).split(" ");
         const command_name = input[0];
@@ -410,18 +381,20 @@ class JonoPlugin {
         // if command doesn't exist
         if (!(command_name in this.commands)) {
             JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), "Command not found");
-            return
+            return "";
         }
 
         const cmd = this.commands[command_name];
         if (!cmd.callbacks.on_command) {
-            return;
+            return "";
         }
 
         this.onCommand(cmd, input);
+        return "";
     }
     onCommand(command, input) {
         const parseArgs = (cmd, str) => {
+            str = str.trim();
             if (!str) {
                 return {};
             }
@@ -430,10 +403,20 @@ class JonoPlugin {
             let cached_str = "";
             let is_in_quotes = false;
             for (let i = 0, len = str.length; i < len; ++i) {
-                // escaped "
-                if (i + 1 < len && str[i] == "\\" && str[i + 1] == "\"") {
+                // escaped stuff
+                if (i + 1 < len && str[i] == "\\") {
+                    switch (str[i + 1]) {
+                        case "\"":
+                            cached_str += "\"";
+                            break;
+                        case "\\":
+                            cached_str += "\\";
+                            break;
+                        default:
+                            JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), `\`\\${str[i + 1]}\` is not a supported escape sequence.`);
+                    }
+
                     i += 1;
-                    cached_str += "\"";
                     continue;
                 }
 
@@ -453,7 +436,7 @@ class JonoPlugin {
                 }
             }
 
-            // any remaining shizzle
+            // last argument
             if (cached_str) {
                 args.push(cached_str);
             }
@@ -463,7 +446,11 @@ class JonoPlugin {
             const cmd_args = cmd.required_args.concat(cmd.optional_args);
             const num_args = Math.min(cmd_args.length, args.length);
             for (let i = 0; i < num_args; ++i) {
-                obj[cmd_args[i]] = args[i];
+                if (i == num_args - 1 && cmd_args[i].endsWith("...")) {
+                    obj[cmd_args[i].slice(0, cmd_args[i].length - 3)] = args.slice(i);
+                } else {
+                    obj[cmd_args[i]] = args[i];
+                }
             }
 
             return obj;
@@ -474,7 +461,11 @@ class JonoPlugin {
         // check args
         let missing_args = [];
         for (let i = 0, len = command.required_args.length; i < len; ++i) {
-            const arg = command.required_args[i];
+            let arg = command.required_args[i];
+            if (i == command.required_args.length - 1 && arg.endsWith("...")) {
+                arg = arg.slice(0, arg.length - 3);
+            }
+
             if (!(arg in args)) {
                 missing_args.push(arg);
             }
@@ -489,14 +480,15 @@ class JonoPlugin {
         command.callbacks.on_command(args);
     }
 
-    addCommand(name, description, required_args, optional_args, callbacks = {}) {
+    addCommand(name, description, required_args, optional_args, is_alias = false) {
         return this.commands[name] = new class {
             constructor() {
                 this.name = name;
                 this.description = description;
                 this.required_args = required_args;
                 this.optional_args = optional_args;
-                this.callbacks = callbacks;
+                this.is_alias = is_alias
+                this.callbacks = {};
             }
 
             // allows chaining
@@ -523,8 +515,12 @@ class JonoPlugin {
                 };
 
                 const addCommandField = (command) => {
-                    let description = "*" + command.description + "*\n";
-                
+                    let description = "";
+
+                    if (command.description) {
+                        description += `*${command.description}*\n`;
+                    }
+
                     // required args
                     description += "arguments: [";
                     if (command.required_args.length > 0) {
@@ -564,12 +560,32 @@ class JonoPlugin {
                         addCommandField(command);
                     }
                 } else {
-                    embed.title = `Commands (${Object.keys(this.commands).length}):`;
+                    const commands = Object.keys(this.commands).filter(name => !this.commands[name].is_alias);
+                    const aliases = Object.keys(this.commands).filter(name => this.commands[name].is_alias);
 
-                    for (const i in this.commands) {
-                        const command = this.commands[i];
+                    // commands
+                    embed.fields.push({
+                        inline: false,
+                        name: `**Commands** (${commands.length}):`,
+                        value: ""
+                    });
+
+                    commands.forEach(name => {
+                        const command = this.commands[name];
                         addCommandField(command);
-                    }
+                    });
+
+                    // aliases
+                    embed.fields.push({
+                        inline: false,
+                        name: `**Aliases** (${aliases.length}):`,
+                        value: ""
+                    });   
+                    
+                    aliases.forEach(name => {
+                        const alias = this.commands[name];
+                        addCommandField(alias);
+                    });
                 }
 
                 JonoUtils.sendBotEmbed(JonoUtils.getCurrentChannelID(), embed);
@@ -1037,14 +1053,67 @@ class JonoPlugin {
                 });
         });
 
-        this.addCommand("test", "Testing purposes", [], [])
+        // alias
+        this.addCommand("alias", "Add an alias for text", ["name", "values..."], [])
             .onCommand(args => {
-                
-        //https://player.twitch.tv/?channel=dallas&muted=true
-        //iframe.src = `https://www.youtube.com/embed/${"7pHpJn-s-Uw"}`;
-        //iframe.src = "//vidcloud.icu/streaming.php?id=MTE0MDM2"
-        //iframe.src = "//vidcloud.icu/streaming.php?id=MTE0ODEx";
+                // command already exists
+                if (args.name in this.commands) {
+                    JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), `Command/alias already exists with the name \`${args.name}\`.`)
+                    return;
+                }
+
+                const user = JonoUtils.getUser();
+
+                this.addCommand(args.name, "Alias by " + user.tag, [], [], true)
+                    .onCommand(() => {
+                        args.values.forEach(value => JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), value));
+                });
+
+                JonoUtils.settings.aliases[args.name] = {
+                    author: user.id,
+                    values: args.values
+                };
+
+                JonoUtils.saveSettings();
         });
+
+        // rm_alias
+        this.addCommand("rm_alias", "Removes an alias", ["name"], [])
+            .onCommand(args => {
+                const alias = this.commands[args.name];
+                if (!alias) {
+                    JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), `\`${args.name}\` does not exist.`);
+                    return;
+                }
+
+                if (!alias.is_alias) {
+                    JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), "Cannot remove a command.");
+                    return;
+                }
+
+                delete this.commands[args.name];
+                delete JonoUtils.settings.aliases[args.name];
+                JonoUtils.saveSettings();
+
+                JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), `Successfully removed the \`${args.name}\` alias.`);
+        });
+
+        // test
+        this.addCommand("test", "Testing purposes", [], ["frog"])
+            .onCommand(args => {
+                //JonoUtils.createIframeWindow("https://twitter.com/i/videos/1177295660468592643?embed_source=facebook&autoplay=1&auto_play=1");
+                console.log(args);
+        });
+    }
+    setupAliases() {
+        for (const name in JonoUtils.settings.aliases) {
+            const alias = JonoUtils.settings.aliases[name];
+
+            this.addCommand(name, "Alias by " + JonoUtils.getUser(alias.id).tag, [], [], true)
+                .onCommand(() => {
+                    alias.values.forEach(value => JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), value));
+            });
+        }
     }
 }
 
@@ -1128,14 +1197,54 @@ const JonoUtils = {
                 }
             }, 500);
         }, 2000);
+
+        JonoUtils.onSwitch();
+    },
+    onSwitch: () => {
+        // attach keydown listener
+        const textarea = JonoUtils.getTextArea();
+        if (textarea) {
+            textarea.addEventListener("keydown", JonoUtils._onKeyDown);
+        }
     },
     release: () => {
         JonoUtils._removeWindows();
         JonoUtils.dispatch_unpatch();
+
         document.removeEventListener("click", JonoUtils.click_event_listener);
         document.removeEventListener("contextmenu", JonoUtils.context_menu_event_listener);
 
         clearInterval(JonoUtils.heartbeat_interval);
+
+        // remove keydown listener
+        const textarea = JonoUtils.getTextArea();
+        if (textarea) {
+            textarea.removeEventListener("keydown", JonoUtils._onKeyDown);
+        }
+    },
+
+    _onKeyDown: () => {
+        const setInput = str => {
+            // dont send the original text into the channel
+            const el = document.querySelector('.chat-3bRxxu form');
+            if (el) {
+                BdApi.getInternalInstance(el).return.stateNode.setState({ textValue: str });
+            }
+        };
+
+        if (event.key != "Enter" || event.shiftKey || event.ctrlKey || event.altKey) {
+            return;
+        }
+
+        const textarea = JonoUtils.getTextArea();
+        if (!textarea) {
+            return;
+        }
+
+        const str = JonoUtils.main_plugin.onInput(textarea.value);
+        if (typeof str == "string") {
+            setInput(str);
+        }
     },
 
     getUser: userid => {
@@ -1233,6 +1342,16 @@ const JonoUtils = {
     },
 
     sendMessage: (channelid, content) => {
+        if (!content) {
+            return;
+        }
+
+        const str = JonoUtils.main_plugin.onInput(content);
+        if (typeof str == "string") {
+            content = str;
+        }
+        
+        // can't send an empty message :P
         if (!content) {
             return;
         }
@@ -1579,8 +1698,8 @@ const JonoUtils = {
         window_div.style["pointer-events"] = "auto"; // accept input
         window_div.style["z-index"] = "3999"; // toasts are 4000 (they have priority)
         window_div.style["position"] = "fixed";
-        window_div.style["left"] = `${options.x || app_element.width() / 2}px`;
-        window_div.style["top"] = `${options.y || app_element.height() / 2}px`;
+        window_div.style["left"] = `${options.x || JonoUtils.getElementDimensions(app_element).x / 2}px`;
+        window_div.style["top"] = `${options.y || JonoUtils.getElementDimensions(app_element).y / 2}px`;
         window_div.style["padding"] = "0";
 
         // content container
@@ -1690,7 +1809,8 @@ const JonoUtils = {
 
                 const onMouseUp = () => {
                     if (callbacks.onresize) {
-                        callbacks.onresize({ width: content_div.width(), height: content_div.height() });
+                        const content_size = JonoUtils.getElementDimensions(content_div);
+                        callbacks.onresize({ width: content_size.x, height: content_size.y });
                     }
 
                     window_div.style["cursor"] = "auto";
@@ -1820,6 +1940,10 @@ const JonoUtils = {
         document.querySelectorAll("div.jono-window").forEach(x => x.remove());
     },
 
+    getElementDimensions: element => {
+        const { left, right, top, bottom } = element.getBoundingClientRect();
+        return { x: right - left, y: bottom - top };
+    },
     isUserOnline: userid => {
         return JonoUtils.getStatus(userid) != "offline";
     },
