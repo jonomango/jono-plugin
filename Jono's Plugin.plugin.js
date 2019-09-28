@@ -63,7 +63,6 @@ class JonoPlugin {
 
     start() {
         JonoUtils.setup(this);
-
         JonoUtils.loadSettings({
             command_prefix: "~",
             custom_notifications: {
@@ -1170,6 +1169,8 @@ const JonoUtils = {
     setup: plugin => {
         JonoUtils.main_plugin = plugin;
 
+        console.log(`${JonoUtils.main_plugin.getName()} setup()`);
+
         // constants
         JonoUtils.MAX_TOASTS = 5;
 
@@ -1200,7 +1201,9 @@ const JonoUtils = {
         JonoUtils.MessagesSelector = BdApi.findModuleByProps("username", "divider");
         JonoUtils.AppSelector = BdApi.findModuleByProps("app");
 
+        JonoUtils.fs = require("fs");
         JonoUtils.url = require("url");
+        JonoUtils.path = require("path");
         JonoUtils.request = require("request");
         JonoUtils.electron = require("electron");
 
@@ -1237,25 +1240,25 @@ const JonoUtils = {
             }
         });
 
+        JonoUtils.onSwitch();
+
         setTimeout(() => {
             // heartbeat function thats called every 500ms
+            let num_beats = 0;
             JonoUtils.heartbeat_interval = setInterval(() => {
                 JonoUtils._flushToasts();
-            
+
+                // heartbeat callback
                 if (JonoUtils.main_plugin.onHeartbeat) {
                     JonoUtils.main_plugin.onHeartbeat();
                 }
+
+                // check for updates every 5 sec
+                if (++num_beats % 10 == 0) {
+                    JonoUtils._checkForUpdate();
+                }
             }, 500);
         }, 2000);
-
-        JonoUtils.onSwitch();
-    },
-    onSwitch: () => {
-        // attach keydown listener
-        const textarea = JonoUtils.getTextArea();
-        if (textarea) {
-            textarea.addEventListener("keydown", JonoUtils._onKeyDown);
-        }
     },
     release: () => {
         JonoUtils._removeWindows();
@@ -1271,8 +1274,17 @@ const JonoUtils = {
         if (textarea) {
             textarea.removeEventListener("keydown", JonoUtils._onKeyDown);
         }
+
+        console.log(`${JonoUtils.main_plugin.getName()} release()`);
     },
 
+    onSwitch: () => {
+        // attach keydown listener
+        const textarea = JonoUtils.getTextArea();
+        if (textarea) {
+            textarea.addEventListener("keydown", JonoUtils._onKeyDown);
+        }
+    },
     _onKeyDown: () => {
         const setInput = str => {
             // dont send the original text into the channel
@@ -1395,6 +1407,34 @@ const JonoUtils = {
     },
     getGuildMembers: guildid => {
         return JonoUtils.GuildMemberStore.getMembers(guildid);
+    },
+    getPlugin: name => {
+        return window.bdplugins[name];
+    },
+    getElementDimensions: element => {
+        const { left, right, top, bottom } = element.getBoundingClientRect();
+        return { x: right - left, y: bottom - top };
+    },
+    getAppElement: () => {
+        return document.querySelector(JonoUtils.AppSelector.app.split(" ").map(x => "." + x).join(", "));
+    },
+    getReactInstance: element => {
+        if (!(element instanceof jQuery) && !(element instanceof Element))
+            return undefined;
+
+        const dom_node = element instanceof jQuery ? element[0] : element;
+        return dom_node[Object.keys(dom_node).find(key => key.startsWith("__reactInternalInstance"))];
+    },
+    getPluginsFolder: () => {
+        return ContentManager.pluginsFolder;
+    },
+    getStringHash: str => {
+        let hash = 0;
+        for (const i in str) {
+            hash = ((hash << 5) - hash) + str.charCodeAt(i);
+            hash &= hash;
+        }
+        return hash;
     },
 
     sendMessage: async (channelid, content) => {
@@ -1710,24 +1750,7 @@ const JonoUtils = {
         return outer_div;
     },
 
-    /*
-    options = {
-        x: 123,
-        y: 123,
-        width: 123,
-        height: 123,
-        ratio: 9/16,
-        spacing: 10,
-        title: "Title",
-        noclose: false,
-        noresize: false,
-        
-        callbacks: {
-            ondragstart: () => {},
-            ondragend: () => {},
-            onclose: () => {},
-        }
-    }*/
+    // custom windows
     createWindow: (options = {}) => {
         const app_element = JonoUtils.getAppElement();
         if (!app_element) {
@@ -1947,10 +1970,6 @@ const JonoUtils = {
             id: window_id
         };
     },
-      
-    // src examples:
-    // twitch: https://player.twitch.tv/?channel=${channelname}
-    // youtube: https://www.youtube.com/embed/${videoid}
     createIframeWindow: (src, options = {}) => {
         const width = options.width || 560,
             height = options.height || 315;
@@ -1987,9 +2006,46 @@ const JonoUtils = {
         document.querySelectorAll("div.jono-window").forEach(x => x.remove());
     },
 
-    getElementDimensions: element => {
-        const { left, right, top, bottom } = element.getBoundingClientRect();
-        return { x: right - left, y: bottom - top };
+    _checkForUpdate: async () => {
+        const plugin = JonoUtils.getPlugin(JonoUtils.main_plugin.getName());
+        if (!plugin || !plugin.source) {
+            return;
+        }
+
+        const filepath = JonoUtils.path.join(JonoUtils.getPluginsFolder(), plugin.filename);
+
+        // get the hash of the current file
+        if (!JonoUtils.plugin_source_hash) {
+            const src = await (async () => {
+                return new Promise((resolve, reject) => {
+                    JonoUtils.fs.readFile(filepath, (err, data) => {
+                        if (err) {
+                            reject(err);
+                        } else {
+                            resolve(data.toString());
+                        }
+                    });
+                });
+            })();
+
+            JonoUtils.plugin_source_hash = JonoUtils.getStringHash(src);
+        }
+
+        // download from github
+        const source_url = plugin.source.replace("/blob/", "/").replace("github.com", "raw.githubusercontent.com");
+        const source = await JonoUtils.request_promise(source_url);
+        const hash = JonoUtils.getStringHash(source);
+
+        // versions are different, prompt for update
+        if (hash != JonoUtils.plugin_source_hash) {
+            JonoUtils.plugin_source_hash = hash;
+
+            BdApi.showConfirmationModal("Update available for Jono's Plugin", "Please update to the latest version.", {
+                cancelText: "No Thanks",
+                confirmText: "Update",
+                onConfirm: async () => await JonoUtils.fs.writeFile(filepath, source, () => {}) 
+            });
+        }
     },
     isUserOnline: userid => {
         return JonoUtils.getStatus(userid) != "offline";
@@ -2000,16 +2056,6 @@ const JonoUtils = {
     switchToChannel: (guildid, channelid) => {
         JonoUtils.ChannelActions.selectChannel(guildid || null, channelid);
         JonoUtils.main_plugin.onSwitch();
-    },
-    getAppElement: () => {
-        return document.querySelector(JonoUtils.AppSelector.app.split(" ").map(x => "." + x).join(", "));
-    },
-    getReactInstance: element => {
-        if (!(element instanceof jQuery) && !(element instanceof Element))
-            return undefined;
-
-        const dom_node = element instanceof jQuery ? element[0] : element;
-        return dom_node[Object.keys(dom_node).find(key => key.startsWith("__reactInternalInstance"))];
     },
     messageToHTML: message => {
         let content = "";
