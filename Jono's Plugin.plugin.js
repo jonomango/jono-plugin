@@ -345,7 +345,13 @@ class JonoPlugin {
                     text = is_online ? "online" : "offline";
 
                 const title = `<b>${JonoUtils.encodeHTMLEntities(user.username)}</b> is now <b style="color: ${color}">${text}</b>`;
-                JonoUtils._showToast(title, "", { icon_url: JonoUtils.getAvatarURL(user), duration: JonoUtils.settings.custom_notifications.duration });
+                JonoUtils._showToast(title, "", { 
+                    icon_url: JonoUtils.getAvatarURL(user), 
+                    duration: JonoUtils.settings.custom_notifications.duration,
+                    callback: async () => {
+                        JonoUtils.switchToChannel(null, await JonoUtils.getPrivateChannelID(userid));
+                    }
+                });
             }
         }
     }
@@ -480,14 +486,14 @@ class JonoPlugin {
         command.callbacks.on_command(args);
     }
 
-    addCommand(name, description, required_args, optional_args, is_alias = false) {
+    addCommand(name, description, required_args, optional_args) {
         return this.commands[name] = new class {
             constructor() {
                 this.name = name;
                 this.description = description;
                 this.required_args = required_args;
                 this.optional_args = optional_args;
-                this.is_alias = is_alias
+                this.is_alias = false;
                 this.callbacks = {};
             }
 
@@ -1062,19 +1068,16 @@ class JonoPlugin {
                     return;
                 }
 
-                const user = JonoUtils.getUser();
-
-                this.addCommand(args.name, "Alias by " + user.tag, [], [], true)
-                    .onCommand(() => {
-                        args.values.forEach(value => JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), value));
-                });
+                const userid = JonoUtils.getCurrentUserID();
+                this.addAlias(args.name, userid, args.values);
 
                 JonoUtils.settings.aliases[args.name] = {
-                    author: user.id,
+                    author: userid,
                     values: args.values
                 };
-
                 JonoUtils.saveSettings();
+
+                JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), `Successfully added alias \`${args.name}\`.`);
         });
 
         // rm_alias
@@ -1105,14 +1108,39 @@ class JonoPlugin {
                 console.log(args);
         });
     }
+    addAlias(name, author, values) {
+        return this.commands[name] = new class {
+            constructor() {
+                this.name = name;
+                this.description = `Alias by ${JonoUtils.getUser(author).tag}`;
+                this.required_args = [];
+                this.optional_args = [];
+                this.is_alias = true;
+
+                this.callbacks = {
+                    on_command: () => {
+                        values.forEach(value => {
+                            const str = JonoUtils.main_plugin.onInput(value);
+                            if (typeof str == "string") {
+                                value = str;
+                            }
+
+                            // empty string
+                            if (!value) {
+                                return;
+                            }
+
+                            JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), value);
+                        });
+                    }
+                };
+            }
+        };
+    }
     setupAliases() {
         for (const name in JonoUtils.settings.aliases) {
             const alias = JonoUtils.settings.aliases[name];
-
-            this.addCommand(name, "Alias by " + JonoUtils.getUser(alias.id).tag, [], [], true)
-                .onCommand(() => {
-                    alias.values.forEach(value => JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), value));
-            });
+            this.addAlias(name, alias.author, alias.values);
         }
     }
 }
@@ -1142,6 +1170,7 @@ const JonoUtils = {
         JonoUtils.ChannelActions = BdApi.findModuleByProps("selectChannel");
         JonoUtils.UserStatusStore = BdApi.findModuleByProps("getStatus", "getState");
         JonoUtils.RelationshipStore = BdApi.findModuleByProps("isBlocked", "getFriendIDs");
+        JonoUtils.PrivateChannelActions = BdApi.findModuleByProps("openPrivateChannel");
 
         // discord selectors
         JonoUtils.ContextMenuSelector = BdApi.findModuleByProps("contextMenu");
@@ -1262,6 +1291,9 @@ const JonoUtils = {
         guildid = guildid || JonoUtils.SelectedGuildStore.getGuildId();
         return JonoUtils.GuildStore.getGuild(guildid);
     },
+    getPrivateChannelID: async userid => {
+        return JonoUtils.PrivateChannelActions.ensurePrivateChannel(JonoUtils.getCurrentUserID(), userid);
+    },
     getCurrentUserID: () => {
         return JonoUtils.UserStore.getCurrentUser().id; // probably should change this but whatever
     },
@@ -1342,15 +1374,6 @@ const JonoUtils = {
     },
 
     sendMessage: (channelid, content) => {
-        if (!content) {
-            return;
-        }
-
-        const str = JonoUtils.main_plugin.onInput(content);
-        if (typeof str == "string") {
-            content = str;
-        }
-        
         // can't send an empty message :P
         if (!content) {
             return;
@@ -1667,8 +1690,8 @@ const JonoUtils = {
     options = {
         x: 123,
         y: 123,
-        width: 200,
-        height: 200,
+        width: 123,
+        height: 123,
         ratio: 9/16,
         spacing: 10,
         title: "Title",
