@@ -64,10 +64,19 @@ A plugin for [BetterDiscord](https://betterdiscord.net/home/). Uses no external 
   Prefixes and appends text to any messages you send. `text` defaults to `:ok_hand::skin-tone-5:`.  
   Usage: `~seibmoz [?text]`
 #### _draw_
-  Draw ascii art and send it into the current channel. `width` defaults to `60` and `height` defaults to `30`.  
+  Lets you draw ascii art and send it in the current channel. `width` defaults to `60` and `height` defaults to `30`.  
   Usage: `~draw [caption] [?width] [?height]`  
   
   ![Example](https://imgur.com/qSjw1lG.gif)
 #### _pickle_
   Watch the Pickle Rick episode.  
   Usage: `~pickle`  
+#### _alias_
+  Add an alias for text, which also works with commands. Author is the id of the alias creator, leaving this empty with default it to the current user. Each value in `values...` will be sent in sequential order. For example, if you type `~alias my_alias "" "Hello world!" "From my_alias!"` then enter `~my_alias` you will send the message `Hello world!` followed by `From my_alias!`.  
+  Usage: `~alias [name] [author] [values...]`  
+#### _rm_alias_
+  Removes an alias.  
+  Usage: `~rm_alias [name]`  
+#### _ex_alias_
+  Exports an alias in chat for easy copy-pasting.  
+  Usage: `~ex_alias [name]`  

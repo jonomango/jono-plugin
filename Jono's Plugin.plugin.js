@@ -433,10 +433,8 @@ class JonoPlugin {
                 }
 
                 if (!is_in_quotes && str[i] == " ") { // clear the string and add it to the args array
-                    if (cached_str) {
-                        args.push(cached_str);
-                        cached_str = "";
-                    }
+                    args.push(cached_str);
+                    cached_str = "";
                 } else { // add the char to the cached string
                     cached_str += str[i];
                 }
@@ -616,7 +614,7 @@ class JonoPlugin {
         this.addCommand("eval", "Evaluates javascript codenz", ["code"], [])
             .onCommand(args => {
                 try {
-                    JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), String(eval(args.code)));
+                    eval(args.code);
                 } catch (e) {
                     JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), e.toString());
                 }
@@ -1060,7 +1058,7 @@ class JonoPlugin {
         });
 
         // alias
-        this.addCommand("alias", "Add an alias for text", ["name", "values..."], [])
+        this.addCommand("alias", "Add an alias for text", ["name", "author", "values..."], [])
             .onCommand(args => {
                 // command already exists
                 if (args.name in this.commands) {
@@ -1068,7 +1066,7 @@ class JonoPlugin {
                     return;
                 }
 
-                const userid = JonoUtils.getCurrentUserID();
+                const userid = args.author || JonoUtils.getCurrentUserID();
                 this.addAlias(args.name, userid, args.values);
 
                 JonoUtils.settings.aliases[args.name] = {
@@ -1099,6 +1097,28 @@ class JonoPlugin {
                 JonoUtils.saveSettings();
 
                 JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), `Successfully removed the \`${args.name}\` alias.`);
+        });
+
+        // ex_alias
+        this.addCommand("ex_alias", "Export an alias in chat", ["name"], [])
+            .onCommand(args => {
+                const alias = JonoUtils.settings.aliases[args.name];
+                if (!alias) {
+                    JonoUtils.sendBotMessage(JonoUtils.getCurrentChannelID(), `\`${args.name}\` does not exist.`);
+                    return;
+                }
+
+                let content = `\`\`\`~alias ${args.name} ${alias.author}`;
+
+                alias.values.forEach(value => {
+                    value = value.replace(/\\/g, "\\\\");
+                    value = value.replace(/\"/g, "\\\"");
+
+                    content += ` "${value}"`;
+                });
+
+                content += "\`\`\`";
+                JonoUtils.sendMessage(JonoUtils.getCurrentChannelID(), content);
         });
 
         // test
@@ -1171,6 +1191,7 @@ const JonoUtils = {
         JonoUtils.UserStatusStore = BdApi.findModuleByProps("getStatus", "getState");
         JonoUtils.RelationshipStore = BdApi.findModuleByProps("isBlocked", "getFriendIDs");
         JonoUtils.PrivateChannelActions = BdApi.findModuleByProps("openPrivateChannel");
+        JonoUtils.GuildMemberStore = BdApi.findModuleByProps("getMember");
 
         // discord selectors
         JonoUtils.ContextMenuSelector = BdApi.findModuleByProps("contextMenu");
@@ -1372,17 +1393,20 @@ const JonoUtils = {
         userid = userid || JonoUtils.getCurrentUserID();
         return JonoUtils.UserStatusStore.getStatus(userid);
     },
+    getGuildMembers: guildid => {
+        return JonoUtils.GuildMemberStore.getMembers(guildid);
+    },
 
-    sendMessage: (channelid, content) => {
+    sendMessage: async (channelid, content) => {
         // can't send an empty message :P
         if (!content) {
-            return;
+            return null;
         }
 
-        JonoUtils.MessageActions._sendMessage(channelid, { 
+        return (await JonoUtils.MessageActions._sendMessage(channelid, { 
             content,
             tts: false
-        });
+        })).body;
     },
     sendEmbed: (channelid, embed) => {
         JonoUtils.request_promise({
